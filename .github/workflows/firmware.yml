@@ -1,0 +1,57 @@
+# Firmware (C / ESP-IDF) build for every chip on the bench, in the pinned IDF image (ADR-001).
+# Path-filtered: do not make it a required check, or PRs that don't touch firmware/ stay pending.
+name: firmware
+
+on:
+  pull_request:
+    paths: ["firmware/**", ".github/workflows/firmware.yml"]
+  push:
+    branches: [main]
+    paths: ["firmware/**", ".github/workflows/firmware.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: firmware (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    # Same version as the guard in firmware/CMakeLists.txt.
+    container: espressif/idf:v5.5.2
+    strategy:
+      fail-fast: false
+      matrix:
+        # C5 and P4 join in their board bring-up (M1).
+        target: [esp32, esp32c3, esp32c6, esp32s3]
+    defaults:
+      run:
+        shell: bash
+        working-directory: firmware
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          # The checkout belongs to another user inside the container; the IDF calls git describe.
+          git config --global --add safe.directory '*'
+          # GitHub replaces the image entrypoint, which is what normally activates the IDF.
+          . "$IDF_PATH/export.sh"
+          idf.py -B "build-$TARGET" -D SDKCONFIG="build-$TARGET/sdkconfig" set-target "$TARGET" build
+
+      - name: Size
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          . "$IDF_PATH/export.sh" > /dev/null
+          {
+            echo "### $TARGET"
+            echo '```'
+            idf.py -B "build-$TARGET" size
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
