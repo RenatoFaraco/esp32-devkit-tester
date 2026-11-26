@@ -498,7 +498,16 @@ fn done_screen_snapshot() {
     }
     assert_eq!(
         line_starting(&lines, " Tests:"),
-        " Tests: 11 passed, 11 total · board back to its app ✓"
+        " Tests: 11 passed, 11 total"
+    );
+    assert_eq!(
+        line_starting(&lines, " ✓ board"),
+        " ✓ board back to its app"
+    );
+    assert!(
+        lines
+            .iter()
+            .all(|line| line.trim_end().chars().count() <= 80)
     );
     assert_eq!(lines[23], " enter back to boards   q quit");
 }

@@ -820,6 +820,27 @@ fn test_line(test: &TestResult, width: u16) -> Line<'static> {
     }
 }
 
+/// The reason of a FAIL that also has a value, on its own gray line under the test; a FAIL
+/// without a value already shows its reason in the value column.
+fn reason_line(test: &TestResult) -> Option<Line<'static>> {
+    let outcome = &test.outcome;
+    if outcome.state() != State::Fail || value_of(outcome).is_empty() {
+        return None;
+    }
+    let reason = outcome.reason()?;
+    Some(Line::from(vec![
+        Span::raw(format!("      {:<TEST_COLUMN$} ", "")),
+        Span::styled(format!("└ {reason}"), gray()),
+    ]))
+}
+
+/// A finished test and, on a FAIL, its reason underneath.
+fn result_lines(test: &TestResult, width: u16) -> Vec<(TestId, Line<'static>)> {
+    let mut lines = vec![(test.id, test_line(test, width))];
+    lines.extend(reason_line(test).map(|line| (test.id, line)));
+    lines
+}
+
 /// Suite headers and the lines under them, in catalog order; a suite appears with its first line.
 fn suite_lines<'a>(tests: impl Iterator<Item = (TestId, Line<'a>)>) -> Vec<Line<'a>> {
     let mut lines = Vec::new();
@@ -836,9 +857,9 @@ fn suite_lines<'a>(tests: impl Iterator<Item = (TestId, Line<'a>)>) -> Vec<Line<
 
 fn running_lines(app: &App, live: &Live, width: u16) -> Vec<Line<'static>> {
     let mut pending = false;
-    let shown = live.plan.iter().filter_map(|id| {
+    let shown = live.plan.iter().flat_map(|id| {
         if let Some(test) = live.results.iter().find(|test| test.id == *id) {
-            return Some((*id, test_line(test, width)));
+            return result_lines(test, width);
         }
         if live.current == Some(*id) {
             let mut spans = vec![
@@ -852,10 +873,10 @@ fn running_lines(app: &App, live: &Live, width: u16) -> Vec<Line<'static>> {
                     gray(),
                 ));
             }
-            return Some((*id, Line::from(spans)));
+            return vec![(*id, Line::from(spans))];
         }
         pending = true;
-        None
+        Vec::new()
     });
     let mut lines = suite_lines(shown);
     if pending {
@@ -869,7 +890,7 @@ fn done_lines(report: &Report, width: u16) -> Vec<Line<'static>> {
         report
             .tests()
             .iter()
-            .map(|test| (test.id, test_line(test, width))),
+            .flat_map(|test| result_lines(test, width)),
     );
     lines.push(Line::raw(""));
     let summary = report.summary();
@@ -894,19 +915,20 @@ fn done_lines(report: &Report, width: u16) -> Vec<Line<'static>> {
         }
         spans.push(count);
     }
-    spans.push(Span::styled(" · ", gray()));
+    lines.push(Line::from(spans));
+    let mut reset = vec![Span::raw(" ")];
     match report.hard_reset().reason() {
         None => {
-            spans.push(Span::raw("board back to its app "));
-            spans.push(glyph(State::Pass));
+            reset.push(glyph(State::Pass));
+            reset.push(Span::raw(" board back to its app"));
         }
         Some(reason) => {
-            spans.push(Span::styled("board not back to its app ", red()));
-            spans.push(glyph(State::Fail));
-            spans.push(Span::styled(format!(" ({reason})"), gray()));
+            reset.push(glyph(State::Fail));
+            reset.push(Span::styled(" board not back to its app", red()));
+            reset.push(Span::styled(format!(" — {reason}"), gray()));
         }
     }
-    lines.push(Line::from(spans));
+    lines.push(Line::from(reset));
     lines
 }
 

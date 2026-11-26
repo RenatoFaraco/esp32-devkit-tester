@@ -114,7 +114,9 @@ impl fmt::Display for ProbeError {
         match self {
             ProbeError::Timeout => f.write_str("timeout"),
             ProbeError::Disconnected => f.write_str("port disconnected"),
-            ProbeError::Busy => f.write_str("port busy (open in another program)"),
+            ProbeError::Busy => {
+                f.write_str("port busy: another program (e.g. a serial monitor) has it open")
+            }
             ProbeError::Protocol(detail) => write!(f, "protocol error: {detail}"),
             ProbeError::Unsupported(detail) => write!(f, "unsupported: {detail}"),
             ProbeError::NotConnected => f.write_str("not connected"),

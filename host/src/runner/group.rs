@@ -358,7 +358,7 @@ pub fn run_board(
     }
     let suites =
         primary_chip.map(|chip| board_suites(session.as_mut(), chip.caps(), clock, &mut notify));
-    let mut reset = reset_outcome(session.hard_reset());
+    let mut reset = after_session(HardReset::done(), session.hard_reset());
     drop(session);
     syncs.push(sync);
     let mut chip = primary_chip.or(board.chip());
@@ -373,10 +373,38 @@ pub fn run_board(
             _ => Ok(port.clone()),
         };
         match current {
-            Ok(current) => {
-                let mut session = probe(&current);
-                let (sync, read) = sync_session(session.as_mut(), &current, chip.is_none());
-                reset = reset_outcome(session.hard_reset());
+            Ok(mut current) => {
+                // A port that just came back (or a hub that re-enumerated after another board was
+                // unplugged) may be listed before Windows lets it open: retry busy/gone opens,
+                // re-finding the port by serial number, within the same re-enumeration window.
+                let start = clock.now_ms();
+                let max_tries = millis(REENUMERATE_TIMEOUT) / millis(POLL_INTERVAL).max(1) + 1;
+                let mut tries = 0;
+                let (sync, read) = loop {
+                    tries += 1;
+                    let mut session = probe(&current);
+                    let (sync, read) = sync_session(session.as_mut(), &current, chip.is_none());
+                    reset = after_session(reset, session.hard_reset());
+                    drop(session);
+                    let transient = matches!(
+                        &sync.mac,
+                        Err(SyncError::Probe(
+                            ProbeError::Busy | ProbeError::Disconnected
+                        ))
+                    );
+                    let elapsed = clock.now_ms().saturating_sub(start);
+                    if !transient || tries >= max_tries || elapsed >= millis(REENUMERATE_TIMEOUT) {
+                        break (sync, read);
+                    }
+                    sleeper.sleep(POLL_INTERVAL);
+                    if let Some(found) = enumerate().into_iter().find(|candidate| {
+                        candidate.usb.is_some()
+                            && candidate.usb.as_ref().map(|u| (u.vid, u.pid, &u.serial))
+                                == current.usb.as_ref().map(|u| (u.vid, u.pid, &u.serial))
+                    }) {
+                        current = found;
+                    }
+                };
                 chip = chip.or(read);
                 syncs.push(sync);
             }
@@ -476,6 +504,16 @@ fn board_suites(
     // An interruption is already recorded in `run` (abort); the caller does the hard reset.
     let _interrupted = run_suites(probe, caps, clock, &mut run, observer);
     run.complete(HardReset::done()).tests().to_vec()
+}
+
+/// The board's state after a session's hard reset. A session that never opened (the port was
+/// busy or gone, so the reset answers `NotConnected`) never touched the board: the state left by
+/// the previous reset stands, instead of claiming the board did not get back to its app.
+fn after_session(previous: HardReset, result: Result<(), ProbeError>) -> HardReset {
+    match result {
+        Err(ProbeError::NotConnected) => previous,
+        other => reset_outcome(other),
+    }
 }
 
 fn reset_outcome(result: Result<(), ProbeError>) -> HardReset {
@@ -1061,6 +1099,78 @@ mod tests {
         assert!(bench.calls().iter().all(|(name, _)| name == "COM13"));
         assert_eq!(time.now.get(), 5_000);
         assert_eq!(time.sleeps.get(), 25);
+    }
+
+    /// Bench, 2026-11-26: unplugging another board from the same hub made the C6 native port
+    /// listed-but-not-openable for a moment; one try failed in 5 ms. It is retried by serial.
+    #[test]
+    fn native_port_busy_for_a_moment_is_retried_and_passes() {
+        let board = c6_board();
+        let mut enumerate = script(vec![
+            vec![ch343("COM13")],
+            vec![ch343("COM13"), native("COM11", "E8:F6:0A:F7:FF:D4")],
+            vec![ch343("COM13"), native("COM12", "E8:F6:0A:F7:FF:D4")],
+        ]);
+        let bench = Bench::new(&[
+            ("COM13", fake("esp32c6")),
+            (
+                "COM11",
+                fake("esp32c6").fail_at(Step::Connect, ProbeError::Busy),
+            ),
+            ("COM12", fake("esp32c6")),
+        ]);
+        let time = FakeTime::default();
+        let report = run_board(
+            &mut bench.factory(),
+            &board,
+            &time,
+            &time,
+            &mut enumerate,
+            &mut |_| {},
+        );
+
+        assert_eq!(outcome(&report, USB_SERIAL_JTAG).state(), State::Pass);
+        assert_eq!(report.summary().failed, 0);
+        assert!(report.hard_reset().is_done());
+    }
+
+    /// A port that stays busy (a serial monitor has it open) fails with a reason that says so,
+    /// and the board is still reported back to its app: that port never opened a session.
+    #[test]
+    fn native_port_kept_busy_fails_with_reason_and_board_is_still_back() {
+        let board = c6_board();
+        let mut enumerate = script(vec![
+            vec![ch343("COM13")],
+            vec![ch343("COM13"), native("COM11", "E8:F6:0A:F7:FF:D4")],
+        ]);
+        let bench = Bench::new(&[
+            ("COM13", fake("esp32c6")),
+            (
+                "COM11",
+                fake("esp32c6").fail_at(Step::Connect, ProbeError::Busy),
+            ),
+        ]);
+        let time = FakeTime::default();
+        let report = run_board(
+            &mut bench.factory(),
+            &board,
+            &time,
+            &time,
+            &mut enumerate,
+            &mut |_| {},
+        );
+
+        let native = outcome(&report, USB_SERIAL_JTAG);
+        assert_eq!(native.state(), State::Fail);
+        let reason = native.reason().map(SafeText::as_str).unwrap_or_default();
+        assert!(reason.contains("port busy"), "{reason}");
+        assert!(
+            report.hard_reset().is_done(),
+            "{:?}",
+            report.hard_reset().reason()
+        );
+        // Bounded: retried within the re-enumeration window, never forever.
+        assert!(time.now.get() <= 5_000 + 1_000 + 200);
     }
 
     #[test]
