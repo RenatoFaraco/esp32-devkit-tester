@@ -446,6 +446,7 @@ ISSUES = [
             "Read known identification registers per chip and compare with the capability table.",
             [
                 "Register addresses and expected values come from the `chips` table, with TRM section",
+                "What READ_REG checks (chips table, #12): on ESP32 the ROM magic register `0x40001000 == 0x00F01D83`; on every chip the factory MAC re-read from its eFuse address (`mac_efuse_reg`) must equal the MAC the ROM reported. Newer chips identify through `GET_SECURITY_INFO` chip id, not a register",
                 "Only read-safe addresses (always-on blocks: eFuse, ID/system, ROM magic); a peripheral without clock may return garbage or hang the ROM",
                 "Mismatch → FAIL with expected vs. read; chip without the register → SKIP with reason",
                 "Results go to the `rom` suite (the PRD's four suites are kept; no `reg` suite)",
