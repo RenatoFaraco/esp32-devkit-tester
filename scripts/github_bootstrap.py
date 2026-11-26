@@ -305,6 +305,27 @@ ISSUES = [
     ),
     (
         M1,
+        ["spec", "docs"],
+        "spec: report-json.md — `--json` report schema v1 (ADR-010)",
+        body(
+            "Write the contract that `--json` consumers (scripts, CI) rely on, before H8 implements it (architect).",
+            [
+                "`docs/context/spec/report-json.md` with integer `schema_version` = 1 at the top",
+                "Board (chip, revision, MAC, ports), suites, tests (suite, name, state, reason, duration ms, expected/read), `finding` annotation, summary counts",
+                "Versioning rules from ADR-010: additive field keeps the version and consumers ignore unknown fields; removal, rename or change of meaning bumps it",
+                "Board text sanitized (no control characters or escape sequences); JSON only on stdout",
+                "One complete example per state (pass, fail, skip with `not run`, pass with finding)",
+            ],
+            [
+                "Spec listed in `docs/context/spec/README.md` as current for v0.1",
+                "Examples usable as test fixtures by H8",
+            ],
+            "ADR-010 · PRD v0.1 H8, §7 criterion 5",
+            depends="ADR-010",
+        ),
+    ),
+    (
+        M1,
         ["host"],
         "host: chip capability table with sources (ADR-004)",
         body(
@@ -313,12 +334,14 @@ ISSUES = [
                 "`chips` module: core, cores, clock, radios, USB-Serial/JTAG, PSRAM options, ID registers per chip",
                 "Rows for ESP32, C3, C5, C6, S3, P4, H2, each with datasheet/TRM source",
                 "Values read from the board override the table; disagreement becomes a finding (ADR-010)",
+                "Each field is marked `invariant` (silicon: ID registers, family, cores, USB-Serial/JTAG presence) or `variable` (module/package: flash size, PSRAM, package, crystal); a divergence on an invariant field is FAIL, on a variable one PASS with finding (ADR-010)",
             ],
             [
                 "Tests: every bench chip has a complete row; ESP32 marks built-in USB-Serial/JTAG absent",
+                "Every field carries its invariant/variable mark (test over the table)",
                 "Adding a chip = adding a row (no `if chip ==` elsewhere)",
             ],
-            "ADR-004 · PRD v0.1 H5, H7",
+            "ADR-004 · ADR-010 · PRD v0.1 H5, H7",
         ),
     ),
     (
@@ -335,6 +358,25 @@ ISSUES = [
             ["Grouping, runner, report and H9 tests run in CI with no board"],
             "ADR-011 · CONVENTIONS §6 · PRD v0.1 §7 criterion 5",
             depends="ADR-011",
+        ),
+    ),
+    (
+        M1,
+        ["host", "test"],
+        "test: guard that the probe never writes flash, eFuse or RAM (ADR-009)",
+        body(
+            "Make the read-only scope of v0.1 a failing test instead of a promise.",
+            [
+                "Guard test in `host/tests/` in the style of `layering.rs`: fails if `probe` mentions espflash write/erase/flash, eFuse write, `write_reg` or RAM-load (stub/`load_ram`) APIs",
+                "Closed allowlist of espflash calls the real `Probe` may use, kept next to the test with a link to ADR-009",
+                "Connection built with `use_stub = false` and `baud = None` (115200), asserted by the test",
+            ],
+            [
+                "Guard test fails on a deliberately added write call (checked once, then reverted)",
+                "Runs in CI on Windows and Linux with no board",
+            ],
+            "ADR-003 · ADR-009 · ADR-011",
+            depends="probe seam",
         ),
     ),
     (
@@ -406,7 +448,7 @@ ISSUES = [
                 "Register addresses and expected values come from the `chips` table, with TRM section",
                 "Only read-safe addresses (always-on blocks: eFuse, ID/system, ROM magic); a peripheral without clock may return garbage or hang the ROM",
                 "Mismatch → FAIL with expected vs. read; chip without the register → SKIP with reason",
-                "Results go to the `rom` suite (or the PRD gains a `reg` suite — architect)",
+                "Results go to the `rom` suite (the PRD's four suites are kept; no `reg` suite)",
             ],
             ["Register tests pass on the bench boards; unit tests with fake reads cover FAIL and SKIP"],
             "PRD v0.1 H5 · ADR-004",
@@ -454,7 +496,8 @@ ISSUES = [
         body(
             "Turn a key press into a run whose events feed the report while the TUI stays responsive.",
             [
-                "Key press runs the selected board (one board → no prompt); only that board's ports are opened",
+                "Identification step first (ADR-008): unidentified bridges are listed and opened only after an explicit confirmation in the TUI (each one gets a reset); declined bridges stay ungrouped",
+                "Then the key press runs the selected board (one board → no prompt); only that board's ports are opened",
                 "Worker thread (`std::thread` + channel): espflash is blocking; `ui` only receives events",
                 "Ports of one board are probed sequentially, never in parallel (one chip, one ROM)",
                 "Per-test timeout: a hung port becomes FAIL, never a frozen run",
@@ -464,7 +507,7 @@ ISSUES = [
                 "Unit test with a fake `Probe`: events arrive in order, UI loop never blocks",
                 "Cancel mid-run leaves the terminal usable",
             ],
-            "PRD v0.1 H1, H3, §7 criterion 3 · CLAUDE.md (layers) · ADR-011",
+            "PRD v0.1 H1, H3, §7 criterion 3 · CLAUDE.md (layers) · ADR-008 · ADR-011",
             depends="probe seam, H3, H4",
         ),
     ),
@@ -476,7 +519,8 @@ ISSUES = [
             "Pure model of the run, testable without terminal or board.",
             [
                 "Suites `port`, `rom`, `efuse`, `flash`; tests with status, reason and duration; summary",
-                "Table-vs-read divergence (ADR-004 finding) represented as decided in ADR-010",
+                "Table-vs-read divergence is a `finding` annotation on the test, not a fourth state (ADR-010)",
+                "Interrupted run: the in-flight test is FAIL; tests that depended on the session are SKIP with `not run: <suite/test> failed`; no test is omitted",
                 "Durations injected (clock trait) so snapshots are deterministic",
                 "No ratatui/crossterm dependency in `report`",
                 "Text from the board is sanitized before it reaches the model (no escape sequences)",
@@ -526,7 +570,8 @@ ISSUES = [
                 "`devkit-tester --no-tui [--port X]`: plain text, no colors when not a TTY",
                 "Plain-text mode: ASCII markers (PASS/FAIL/SKIP) when stdout is not a UTF-8 TTY",
                 "`--json` follows `docs/context/spec/report-json.md` (`schema_version`); JSON only on stdout, diagnostics on stderr",
-                "Exit codes: 0 = no FAIL (SKIP is not a failure), 1 = at least one FAIL, 2 = no board / usage / environment error (e.g. WSL1)",
+                "Exit codes: 0 = no FAIL (SKIP is not a failure), 1 = at least one FAIL, 2 = no run (no board, ambiguous selection, usage error, unsupported environment such as WSL1, cancelled by the user)",
+                "Without `--port` and several boards: list them (chip, MAC, ports) on stderr and exit 2; never guess",
                 "`--port` accepts a port name or a USB serial number at run time; never stored",
             ],
             [
@@ -534,7 +579,7 @@ ISSUES = [
                 "Exit codes covered by tests",
             ],
             "PRD v0.1 H8, §7 criterion 5 · ADR-010",
-            depends="report model, runner, ADR-010",
+            depends="report model, runner, ADR-010, spec report-json.md",
         ),
     ),
     (
