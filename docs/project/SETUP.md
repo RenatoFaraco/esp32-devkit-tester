@@ -39,8 +39,8 @@ cargo run --manifest-path host/Cargo.toml          # abre a TUI; q sai
 
 # O que o CI roda (Windows e Linux):
 cargo fmt --manifest-path host/Cargo.toml --all -- --check
-cargo clippy --manifest-path host/Cargo.toml --all-targets -- -D warnings
-cargo test --manifest-path host/Cargo.toml
+cargo clippy --manifest-path host/Cargo.toml --all-targets --locked -- -D warnings
+cargo test --manifest-path host/Cargo.toml --locked
 ```
 
 ## 4. Firmware (ESP-IDF v5.5.2)

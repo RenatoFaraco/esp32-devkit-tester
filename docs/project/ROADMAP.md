@@ -6,21 +6,22 @@
 Cada marco termina com: CI verde, tag, `CHANGELOG.md` atualizado e este arquivo marcado.
 
 ## M0 · Fundação 🖥️ — `v0.0.1`
-- [ ] Repositório no GitHub (nome, descrição, tópicos e social preview conforme `GITHUB.md`)
-- [ ] `scripts/github_bootstrap.py`: labels, milestones M0…M5 e issues do M1 (idempotente,
+- [x] Repositório no GitHub (nome, descrição, tópicos e social preview conforme `GITHUB.md`)
+- [x] `scripts/github_bootstrap.py`: labels, milestones M0…M5 e issues do M1 (idempotente,
       dry run por padrão, `--apply` para criar), como no esp32-logcat
-- [ ] Templates de issue e PR (`.github/`), incluindo "board bring-up"
-- [ ] `host/`: workspace Cargo, crate `esp32-devkit-tester`, binário `devkit-tester` que abre
+- [x] Templates de issue e PR (`.github/`), incluindo "board bring-up"
+- [x] `host/`: workspace Cargo, crate `esp32-devkit-tester`, binário `devkit-tester` que abre
       a tela "Press any key" e sai com `q`
-- [ ] `firmware/`: projeto ESP-IDF "hello" que compila para os 4 alvos da bancada (ESP32, C3, C6, S3;
+- [x] `firmware/`: projeto ESP-IDF "hello" que compila para os 4 alvos da bancada (ESP32, C3, C6, S3;
       C5 e P4 entram no bring-up do M1 quando as placas chegarem); versão do
       IDF fixada; ADR-001 aceita ou revista
-- [ ] Módulo `platform` no host (vazio na fase 1, ponto de extensão para WSL/Linux/macOS, ADR-007)
-- [ ] CI: fmt + clippy + test do host (Windows e Linux, ADR-007); build do firmware na matriz de alvos
+- [x] Módulo `platform` no host: único lugar com `cfg` de SO; detecta WSL1/WSL2 sem comportamento
+      especial (ponto de extensão para WSL/Linux/macOS, ADR-007)
+- [x] CI: fmt + clippy + test do host (Windows e Linux, ADR-007); build do firmware na matriz de alvos
       (imagem `espressif/idf`)
-- [ ] Comandos exatos de build/teste escritos no `CLAUDE.md` e no `test-runner`; instruções de
+- [x] Comandos exatos de build/teste escritos no `CLAUDE.md` e no `test-runner`; instruções de
       ambiente para o usuário em PowerShell (ESP-IDF ativado, `cargo`)
-- **Pronto quando:** CI verde num push.
+- **Pronto quando:** CI verde num push. ✅ Entregue em `v0.0.1` (2026-11-26).
 
 ## M1 · Identificar 🖥️🔌 — `v0.1.0` · [PRD](../context/prd/v0.1-identify.md)
 - [ ] Enumeração e classificação de portas por VID:PID; agrupamento por placa (H2)

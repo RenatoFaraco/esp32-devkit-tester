@@ -4,7 +4,9 @@
 chip alive, do the UART and JTAG ports work, do the eFuses, flash and PSRAM match what the
 board claims, and what exactly is on it.
 
-> **Status:** planning → v0.1 in progress. See the [roadmap](docs/project/ROADMAP.md).
+> **Status:** v0.0.1 — foundation (host TUI skeleton, firmware build for ESP32, ESP32-C3,
+> ESP32-C6 and ESP32-S3, CI). v0.1 (board identification) in progress. See the
+> [roadmap](docs/project/ROADMAP.md).
 
 ```
  PASS  port      USB-Serial/JTAG 303A:1001 · CH343 bridge                 (40 ms)
