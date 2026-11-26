@@ -40,6 +40,13 @@ preencher a linha (citar a fonte na issue de bring-up).
 Conferir cada linha com o Gerenciador de Dispositivos ao fazer o bring-up.
 
 ## Armadilhas conhecidas (herdadas do esp32-logcat)
+- **Reset do chip derruba a porta nativa, seja qual for a porta usada.** Um hard reset pela
+  ponte (RTS → EN) reinicia o chip inteiro, inclusive o USB-Serial/JTAG: a porta `303A:1001`
+  some e volta em menos de 2 s (C3 e C6, Windows, 2026-11-26), com o mesmo número de série. O
+  runner precisa esperar a porta nativa reaparecer pelo número de série antes de testá-la
+  (ADR-007/008: reconexão pelo número de série, não pelo nome da COM).
+- O reset **para o download** pela porta nativa (`UsbJtagSerialReset`) não derruba a porta: a
+  sessão inteira roda em ~0,3 s de conexão.
 - ESP32 original: com os defaults do IDF v5.5.2 o bootloader ocupa 0x66c0 de 0x7000 (só 8%
   livre). Opção de bootloader no `sdkconfig.defaults` (log verbose, secure boot) pode estourar.
 - Nas pontes, `RTS` costuma ir para EN (reset) e `DTR` para o pino de boot (GPIO0/GPIO9):

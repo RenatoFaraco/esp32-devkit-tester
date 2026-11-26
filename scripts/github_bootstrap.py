@@ -502,6 +502,7 @@ ISSUES = [
                 "Then the key press runs the selected board (one board → no prompt); only that board's ports are opened",
                 "Worker thread (`std::thread` + channel): espflash is blocking; `ui` only receives events",
                 "Ports of one board are probed sequentially, never in parallel (one chip, one ROM)",
+                "After a port's hard reset the native `303A:1001` port re-enumerates (seen on C3/C6: back in < 2 s); wait for it by USB serial number (bounded, e.g. 5 s) before probing it, never by COM name (hardware.md)",
                 "Per-test timeout: a hung port becomes FAIL, never a frozen run",
                 "Measures each test through a `Clock` trait (fake clock in tests) so durations are deterministic; the report only receives `duration_ms`",
                 "`q` during a run cancels it and restores the terminal",
