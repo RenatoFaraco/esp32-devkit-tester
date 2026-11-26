@@ -25,8 +25,8 @@ Português nas explicações e em `docs/`; código, nomes, commits e issues em i
 - Firmware: ESP-IDF via `idf.py` (ADR-001). Versão e comandos exatos são fixados no M0 e
   anotados aqui e no `test-runner`.
 - Host: Rust estável (edition 2024), `cargo`; workspace em `host/`.
-- Placas (inventário e armadilhas em `docs/context/hardware.md`): ESP32, C3, C5, C6, S3, P4;
-  H2 a caminho. O número da COM muda de máquina para máquina: **nunca fixar porta** em código
+- Placas (inventário e armadilhas em `docs/context/hardware.md`): na bancada ESP32, C3, C6, S3;
+  C5 e P4 a caminho; H2 ainda não comprada. O número da COM muda de máquina para máquina: **nunca fixar porta** em código
   ou config versionada; o host identifica portas por VID:PID.
 
 ## Estrutura (alvo; o M0 cria `firmware/` e `host/`)
