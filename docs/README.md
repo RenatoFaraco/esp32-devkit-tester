@@ -41,7 +41,7 @@ já decidiram, e viram corrente quando a versão começar. "PRD" sem versão = o
 
 | ADR | Decisão | Status |
 |-----|---------|--------|
-| [001](context/decisions/001-c-firmware-with-plain-esp-idf.md) | Firmware em C com ESP-IDF puro (`idf.py`), sem PlatformIO | proposta |
+| [001](context/decisions/001-c-firmware-with-plain-esp-idf.md) | Firmware em C com ESP-IDF puro (`idf.py`), sem PlatformIO | aceita |
 | [002](context/decisions/002-rust-host-ratatui-espflash.md) | Host em Rust com ratatui e espflash como biblioteca | aceita |
 | [003](context/decisions/003-non-destructive-by-default.md) | Não destrutivo por padrão; v0.1 só com o ROM | aceita |
 | [004](context/decisions/004-chip-capabilities-as-data.md) | Capacidades por chip como dado; SKIP para o que não se aplica | aceita |

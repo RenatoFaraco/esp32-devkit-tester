@@ -33,6 +33,8 @@ preencher a linha (citar a fonte na issue de bring-up).
 Conferir cada linha com o Gerenciador de Dispositivos ao fazer o bring-up.
 
 ## Armadilhas conhecidas (herdadas do esp32-logcat)
+- ESP32 original: com os defaults do IDF v5.5.2 o bootloader ocupa 0x66c0 de 0x7000 (só 8%
+  livre). Opção de bootloader no `sdkconfig.defaults` (log verbose, secure boot) pode estourar.
 - Nas pontes, `RTS` costuma ir para EN (reset) e `DTR` para o pino de boot (GPIO0/GPIO9):
   abrir a porta com os dois soltos para não segurar a placa em reset.
 - Driver `usbser.sys` (porta nativa no Windows): depois de mexer no `RTS`, reescrever o `DTR`.
