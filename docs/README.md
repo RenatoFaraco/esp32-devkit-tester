@@ -49,6 +49,10 @@ já decidiram, e viram corrente quando a versão começar. "PRD" sem versão = o
 | [005](context/decisions/005-result-line-protocol.md) | Resultados da placa em linhas ASCII próprias sobre Unity | proposta |
 | [006](context/decisions/006-jtag-backend.md) | Backend de JTAG (OpenOCD vs probe-rs) | proposta |
 | [007](context/decisions/007-platform-support-windows-first.md) | Plataformas: Windows/PowerShell primeiro, depois WSL2, depois Linux/macOS | aceita |
+| [008](context/decisions/008-board-identity-and-port-grouping.md) | Identidade da placa = MAC de fábrica; agrupamento das portas; portas abertas só por ação do usuário, em sequência | proposta |
+| [009](context/decisions/009-read-only-scope-v0.1.md) | "Só leitura" na v0.1: ROM sem stub, escritas voláteis listadas, hard reset de volta à aplicação | proposta |
+| [010](context/decisions/010-report-as-contract.md) | Relatório como contrato: PASS/FAIL/SKIP + achado, `--json` versionado, códigos de saída, seleção de placa | proposta |
+| [011](context/decisions/011-probe-seam-and-host-concurrency.md) | Trait `Probe` acima do espflash, fixtures de fatos por chip, thread + canal sem async | proposta |
 
 ADR novo segue o modelo de [CONVENTIONS.md](project/CONVENTIONS.md) §7 e entra nesta tabela no
 mesmo commit.
