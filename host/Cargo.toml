@@ -22,6 +22,10 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.105"
+# ROM bootloader protocol (ADR-002). Library API only: no `cli` feature (no SemVer guarantee).
+# Pinned exactly: 4.5.0 is the last release with MSRV 1.88; `probe/espflash.rs` and
+# `probe/rdid.rs` were written against its source (guarded by tests/layering.rs).
+espflash = { version = "=4.5.0", default-features = false, features = ["serialport"] }
 ratatui = "0.30"
 serialport = { version = "4.10", features = ["usbportinfo-interface"] }
 
@@ -29,6 +33,9 @@ serialport = { version = "4.10", features = ["usbportinfo-interface"] }
 # Only to read test fixtures (FakeProbe); promoted to [dependencies] by the JSON report (#24).
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+# Only to build espflash's private connection errors (timeout, device not found) in the
+# `map_err` tests, through espflash's public `From<SlipError>`. Same version espflash uses.
+slip-codec = "=0.4.0"
 
 [lints.rust]
 unsafe_code = "forbid"

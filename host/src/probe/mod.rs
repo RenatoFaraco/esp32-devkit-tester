@@ -8,16 +8,20 @@
 //! espflash takes a concrete serial port type, so fake bytes cannot be injected below it. The
 //! seam sits **above** it instead: the [`Probe`] trait returns *facts*, i.e. what the board
 //! said, already decoded (chip, revision, MAC, eFuse-derived values, flash ID, register reads).
-//! The runner depends only on this trait; the real implementation (espflash) is the only place
-//! that will import `espflash`, and its errors never cross the seam: they become a
-//! [`ProbeError`].
+//! The runner depends only on this trait; the real implementation, [`EspflashProbe`]
+//! (`probe/espflash.rs`, plus the RDID sequence in `probe/rdid.rs`), is the only place that
+//! imports `espflash`, and its errors never cross the seam: they become a [`ProbeError`].
 //!
 //! There is one method per fact so the runner can time each one and blame a failure on the
 //! right test. In tests, `FakeProbe` (in `probe::fake`, test builds only) replays the facts
 //! recorded in `host/tests/fixtures/<chip>.json` and fails on demand.
 
+mod espflash;
 #[cfg(test)]
 pub mod fake;
+mod rdid;
+
+pub use self::espflash::EspflashProbe;
 
 use std::fmt;
 

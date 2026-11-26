@@ -1,7 +1,9 @@
 //! Architecture guards:
 //! - only `src/ui/` may mention `ratatui` or `crossterm`;
 //! - only `src/platform.rs` / `src/platform/` may use OS-specific `cfg` (ADR-007);
-//! - only `src/chips.rs` may name a specific chip variant (ADR-004: a new chip is a new row).
+//! - only `src/chips.rs` may name a specific chip variant (ADR-004: a new chip is a new row);
+//! - only `src/probe/espflash.rs` and `src/probe/rdid.rs` may use the `espflash` crate
+//!   (ADR-011: its types and errors never cross the `Probe` seam).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -9,6 +11,10 @@ use std::path::{Path, PathBuf};
 const UI_ONLY_CRATES: [&str; 2] = ["ratatui", "crossterm"];
 const OS_CFG_TERMS: [&str; 4] = ["windows", "unix", "target_os", "target_family"];
 const CHIP_VARIANT_TERMS: [&str; 2] = ["Chip::Esp", "Chip::*"];
+/// Files allowed to name the `espflash` crate, relative to `src/`.
+const ESPFLASH_FILES: [[&str; 2]; 2] = [["probe", "espflash.rs"], ["probe", "rdid.rs"]];
+/// A `espflash::` preceded by one of these is our module `probe::espflash`, not the crate.
+const OWN_MODULE_PREFIXES: [&str; 3] = ["self::", "super::", "probe::"];
 
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in fs::read_dir(dir).unwrap() {
@@ -113,4 +119,57 @@ fn chip_variants_only_in_chips() {
         "chip variants named outside src/chips.rs (use the capability table): {}",
         offenders.join("; ")
     );
+}
+
+/// Uses of the `espflash` crate in a line: `use espflash`, `extern crate espflash` and every
+/// `espflash::` path that is not our own `probe::espflash` module.
+fn espflash_crate_uses(line: &str) -> Option<String> {
+    let mut found = Vec::new();
+    for term in ["use espflash", "extern crate espflash"] {
+        if line.contains(term) {
+            found.push(term.to_owned());
+        }
+    }
+    for (index, _) in line.match_indices("espflash::") {
+        let before = &line[..index];
+        if !OWN_MODULE_PREFIXES
+            .iter()
+            .any(|prefix| before.ends_with(prefix))
+        {
+            found.push("espflash::".to_owned());
+        }
+    }
+    found.dedup();
+    (!found.is_empty()).then(|| found.join(", "))
+}
+
+#[test]
+fn only_the_probe_backend_uses_espflash() {
+    let offenders = offending_lines(
+        |src, path| {
+            !ESPFLASH_FILES
+                .iter()
+                .any(|parts| path == parts.iter().fold(src.to_path_buf(), |p, part| p.join(part)))
+        },
+        espflash_crate_uses,
+    );
+
+    assert!(
+        offenders.is_empty(),
+        "espflash used outside src/probe/espflash.rs and src/probe/rdid.rs: {}",
+        offenders.join("; ")
+    );
+}
+
+#[test]
+fn espflash_guard_tells_the_crate_from_our_module() {
+    assert!(espflash_crate_uses("use espflash::connection::Connection;").is_some());
+    assert!(espflash_crate_uses("let e: espflash::Error = x;").is_some());
+    assert!(espflash_crate_uses("use ::espflash::flasher::Flasher;").is_some());
+    assert!(espflash_crate_uses("use espflash as rom;").is_some());
+    assert!(espflash_crate_uses("pub use self::espflash::EspflashProbe;").is_none());
+    assert!(espflash_crate_uses("use super::espflash::{map_err, shield};").is_none());
+    assert!(espflash_crate_uses("use crate::probe::espflash::Stage;").is_none());
+    assert!(espflash_crate_uses("mod espflash;").is_none());
+    assert!(espflash_crate_uses("let probe = EspflashProbe::new();").is_none());
 }

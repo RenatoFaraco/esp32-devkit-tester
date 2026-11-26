@@ -78,13 +78,26 @@ ID da flash por `spi_command`, que escreve `USR`/`USR2`/`W0`/`CMD` e restaura s�
   porta nativa derruba o repasse do usbipd; a ponte como porta primária (ADR-008) contorna.
 
 ## A verificar (no código do espflash fixado no `Cargo.lock`, antes de aceitar)
-- Lista completa das escritas que `Flasher::connect` + `flash_detect` fazem com `use_stub =
-  false` em cada chip da bancada: se há `SPI_SET_PARAMS`, desligamento de watchdog (RTC WDT /
-  SWD, como o esptool faz na porta USB-Serial/JTAG) ou outra escrita não listada no item 2.
-  O que aparecer entra no item 2 com o motivo, ou vira contorno no `probe`.
+- ~~Lista completa das escritas~~ **Conferido no código do espflash 4.5.0 (2026-11-26).**
+  Com `use_stub = false` e `baud = None` não há `CHANGE_BAUDRATE`, `MEM_*`, `FLASH_*` nem
+  desligamento de watchdog. As escritas, todas voláteis, são:
+  1. DTR/RTS (`UsbJtagSerialReset` na nativa; `ClassicReset` 50/500 ms nas pontes;
+     `UnixTightReset` antes no Unix), até 7 tentativas.
+  2. `SPI_ATTACH` (IO MUX + controlador SPI), com os pinos padrão e depois os do ESP32-PICO-D4.
+  3. RDID no SPI1: `USR`, `USR2`, `MISO_DLEN` (ou `USR1` sem registradores de comprimento),
+     `W0`, `CMD`; `USR`/`USR2` restaurados. Feito pelo `flash_detect` do espflash e pelo nosso
+     `probe/rdid.rs` (o espflash não expõe o JEDEC completo, lacuna da #16).
+  4. **`SPI_SET_PARAMS`**: grava na RAM do ROM os parâmetros da flash (tamanho, bloco 64 KiB,
+     setor 4 KiB, página 256, máscara de status). Volátil; acrescentado ao item 2.
+  5. **Só no ESP32-P4 rev 3.1/3.2** (`power_on_flash`): `LP_SYSTEM_REG_ANA_XPD_PAD_GROUP_REG`
+     e registradores do LDO do PMU, para ligar a alimentação da flash. Volátil.
+  Bases do SPI1: ESP32 `0x3FF42000`; C3/S3 `0x60002000`; C5/C6/H2 `0x60003000`; P4
+  `0x5008D000`.
 - `CMD`, `W0` e `USR1` não são restaurados pelo `spi_command`: confirmar que o hard reset
   final basta (deve bastar: são flip-flops com valor de reset).
 - **Secure Download Mode** (eFuse): o ROM recusa parte dos comandos; confirmar quais (em
   especial `READ_REG`). Testes que dependem deles viram SKIP com motivo, não FAIL.
-- Como o espflash faz o hard reset na porta nativa (`ResetAfterOperation::HardReset`) e se
-  a aplicação volta a rodar em todos os chips da bancada.
+- Hard reset: ponte = RTS 1 → 100 ms → 0; nativa = DTR 0, RTS 1, DTR 0, RTS 1, 100 ms, RTS 0.
+  Conferido na C3 e na C6 (2026-11-26) pelas duas portas: o ROM responde de novo na próxima
+  conexão e a porta nativa re-enumera (ver `hardware.md`). Falta confirmar visualmente que a
+  aplicação volta a rodar (C3 com o firmware do esp32-logcat).
