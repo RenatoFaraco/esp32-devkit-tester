@@ -17,3 +17,6 @@ download no reset) não muda nada; gravar um firmware de teste muda.
 - A v0.1 já entrega valor (a placa enumera, o ROM responde, flash e PSRAM batem com o
   declarado) sem nenhum firmware.
 - Carregar o teste na RAM em vez da flash fica como opção aberta da v0.2.
+- Refinado pelo dono (2026-11-26): a partir da v0.2, além de confirmar antes de gravar, o
+  testador deixa a flash idêntica à de antes e não deixa nada seu na placa (PRD v0.2, "Requisito
+  do dono"). Isso substitui o item 3 ("testes de flash escrevem só na partição `scratch`").
