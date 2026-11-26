@@ -1,0 +1,33 @@
+[workspace]
+
+[package]
+name = "esp32-devkit-tester"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+description = "Plug in an ESP32 dev board, press a key, and get a Jest-style PASS/FAIL report (UART, JTAG, registers, memory) in a terminal UI."
+repository = "https://github.com/RenatoFaraco/esp32-devkit-tester"
+readme = "../README.md"
+keywords = ["esp32", "embedded", "tui", "hardware-testing", "espressif"]
+categories = ["embedded", "command-line-utilities", "development-tools::testing", "hardware-support"]
+
+[lib]
+name = "esp32_devkit_tester"
+path = "src/lib.rs"
+
+[[bin]]
+name = "devkit-tester"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.105"
+ratatui = "0.30"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
