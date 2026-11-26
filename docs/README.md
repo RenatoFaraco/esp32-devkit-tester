@@ -36,7 +36,7 @@ já decidiram, e viram corrente quando a versão começar. "PRD" sem versão = o
 | Documento | Para quê |
 |-----------|----------|
 | [hardware.md](context/hardware.md) | As placas da bancada: chip, portas, VID:PID, armadilhas |
-| [spec/](context/spec/README.md) | Contratos no fio host ↔ placa |
+| [spec/](context/spec/README.md) | Contratos no fio host ↔ placa e o `--json` (host ↔ scripts/CI) |
 
 ### Decisões (`context/decisions/`)
 
