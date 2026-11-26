@@ -1,0 +1,57 @@
+{
+  "format_version": 1,
+  "captured": {
+    "date": "2026-11-26",
+    "tool": "esptool.py v4.12.dev1 / espefuse.py v4.12.dev1 (ESP-IDF v5.5.2)",
+    "commands": [
+      "python -m esptool --port <PORT> --baud 115200 --no-stub chip_id",
+      "python -m esptool --port <PORT> --baud 115200 --no-stub flash_id",
+      "python -m espefuse --port <PORT> --baud 115200 dump",
+      "python -m espefuse --port <PORT> --baud 115200 summary --format json"
+    ],
+    "by": "hand, bring-up part 1 (issue #30)"
+  },
+  "board": {
+    "model": "ESP32-S3 DevKit (CH343 UART port; native USB port not connected in this capture)",
+    "ports": [
+      { "vid": "1A86", "pid": "55D3", "bridge": "CH343", "usb_serial": "5D28088406", "driver": "CH343SER 2.1.2025.7" }
+    ]
+  },
+  "chip": {
+    "family": "esp32s3",
+    "description": "ESP32-S3 (QFN56)",
+    "revision": { "major": 0, "minor": 2 },
+    "package_version": 0,
+    "crystal_mhz": 40,
+    "features": ["WiFi", "BLE", "Embedded PSRAM 8MB (AP_3v3)"],
+    "mac": "10:51:db:84:14:0c",
+    "embedded_flash": false,
+    "embedded_psram": true
+  },
+  "efuse_blocks": {
+    "BLOCK0": ["00000000", "00000000", "0000d1f5", "00000000", "00000100", "00000000"],
+    "BLOCK1": ["db84140c", "00001051", "00000000", "03080000", "48504ac8", "6400b838"],
+    "BLOCK2": ["64b628d7", "707a1127", "2e3166b9", "40a075c2", "b149b601", "124fc4d4", "b0cec8f2", "3356ccce"],
+    "BLOCK3": ["00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000"],
+    "BLOCK4": ["00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000"],
+    "BLOCK5": ["00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000"],
+    "BLOCK6": ["00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000"],
+    "BLOCK7": ["00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000"],
+    "BLOCK8": ["00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000"],
+    "BLOCK9": ["00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000"],
+    "BLOCK10": ["00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000"]
+  },
+  "flash": {
+    "jedec_manufacturer": "68",
+    "jedec_device": "4018",
+    "size_bytes": 16777216,
+    "type": "quad (eFuse)",
+    "voltage": "3.3V (eFuse)"
+  },
+  "psram": {
+    "efuse_capacity": "8M",
+    "efuse_vendor": "AP_3v3",
+    "efuse_temp_grade": "85C"
+  },
+  "registers": []
+}
