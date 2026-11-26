@@ -30,7 +30,7 @@ preencher a linha (citar a fonte na issue de bring-up).
 
 | VID:PID | O que é | Observação |
 |---------|---------|------------|
-| `303A:1001` | USB-Serial/JTAG nativo da Espressif | serial + JTAG na mesma porta; reset faz a porta sumir e voltar. No Windows a COM se chama "Dispositivo Serial USB" (driver `usbser`), interface `MI_00`; o JTAG é `MI_02` (WinUSB). O número de série (= MAC base, `AA:BB:CC:DD:EE:FF`, maiúsculas com `:`) está no **dispositivo composto pai**, não na COM — conferido na C6 |
+| `303A:1001` | USB-Serial/JTAG nativo da Espressif | serial + JTAG na mesma porta; reset faz a porta sumir e voltar. No Windows a COM se chama "Dispositivo Serial USB" (driver `usbser`), interface `MI_00`; o JTAG é `MI_02` (WinUSB). O número de série (= MAC base, `AA:BB:CC:DD:EE:FF`, maiúsculas com `:`) está no **dispositivo composto pai**, não na COM — conferido na C6; o `serialport` 4.10.1 o entrega (sobe até o pai) com `interface = 0` |
 | `10C4:EA60` | Silicon Labs CP210x | ponte USB-UART comum em DevKitC |
 | `1A86:7523` | WCH CH340 | |
 | `1A86:7522` | WCH CH340K | placa C3 da bancada (driver `CH341SER`); **sem número de série USB**: o ID do Windows é a posição no hub |

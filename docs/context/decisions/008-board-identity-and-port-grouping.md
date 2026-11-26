@@ -88,13 +88,20 @@ Do lado do hardware:
   repasse do usbipd; por isso a ponte já é a primária. Nada muda no firmware.
 
 ## A verificar
-- Se o `serialport` no Windows entrega o número de série da porta `303A:1001` (dispositivo
-  composto: CDC + JTAG; o número de série está no pai, não na interface `MI_00`). Se não
-  entregar, vale o item 6 e o agrupamento antes da sondagem fica vazio no Windows.
+- ~~Se o `serialport` no Windows entrega o número de série da porta `303A:1001`~~
+  **Conferido (2026-11-26, serialport 4.10.1, C6 na COM11):** entrega `E8:F6:0A:F7:FF:D4`,
+  lido do dispositivo composto pai (`CM_Get_Parent` quando o ID tem `MI_xx`), com
+  `interface = Some(0)`. O agrupamento antes da sondagem funciona no Windows.
+- Ponte sem número de série (CH340K): pelo código do serialport 4.10.1 (issue #203 da crate),
+  no Windows o campo vem com um pedaço do ID de instância gerado pelo SO (ex.: `"5"`) em vez de
+  vazio. Conferir na C3; se confirmado, a tabela VID:PID marca a ponte como "sem número de
+  série confiável" e o host o trata como ausente (`usb_serial: null`, spec `report-json.md`).
+- FT2232 (ESP-Prog) com o driver da FTDI (`FTDIBUS\...`): o ID não tem `MI_xx`, então o
+  número da interface não chega e as duas interfaces ficam ambíguas (listadas, não sondadas).
+  Sem ESP-Prog na bancada; conferir quando houver.
 - Formato do número de série no descritor (com ou sem `:`, maiúsculas) em cada chip da
   bancada; a normalização do item 1 cobre as variações vistas no bring-up.
   Conferido na C6 (2026-11-26, PnP do Windows): `E8:F6:0A:F7:FF:D4`, maiúsculas com `:`, no
-  dispositivo composto pai; igual ao MAC base lido pelo ROM. Falta C3/S3 pela porta nativa e
-  se o `serialport` o entrega (item acima).
+  dispositivo composto pai; igual ao MAC base lido pelo ROM. Falta C3/S3 pela porta nativa.
 - Localização exata do MAC de fábrica no eFuse de cada chip (TRM), registrada na tabela de
   capacidades.
