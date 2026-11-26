@@ -37,6 +37,18 @@ Tests: 4 passed, 1 skipped, 5 total
   CPU tests on the board itself and streams the results back.
 - **Non-destructive by default:** v0.1 only reads. Writing the test firmware always asks first.
 
+## Building from source
+
+Windows + PowerShell (the reference platform). Full setup, including ESP-IDF v5.5.2 and known
+pitfalls, in [docs/project/SETUP.md](docs/project/SETUP.md) (Portuguese).
+
+```powershell
+cargo run --manifest-path host/Cargo.toml        # host TUI (Rust stable)
+
+. .\scripts\Enable-Idf.ps1                       # firmware: activate ESP-IDF v5.5.2
+idf.py -C firmware -B firmware/build-esp32c6 -D SDKCONFIG=build-esp32c6/sdkconfig set-target esp32c6 build
+```
+
 ## Related
 
 - [esp32-logcat](https://github.com/RenatoFaraco/esp32-logcat) — persistent, `adb logcat`-style

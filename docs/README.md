@@ -14,6 +14,7 @@ Regra para documento novo: "como faço?" → `project/`; "o que é?" ou "por que
 | [CONVENTIONS.md](project/CONVENTIONS.md) | Idioma, Git, estilo de C e Rust, testes, modelo de ADR |
 | [ROADMAP.md](project/ROADMAP.md) | Marcos M0…M5 (um por versão) e o que falta em cada um |
 | [GITHUB.md](project/GITHUB.md) | Nome, descrição, tópicos (SEO), labels e milestones do repositório |
+| [SETUP.md](project/SETUP.md) | Ambiente no Windows/PowerShell: Rust, ESP-IDF, comandos e problemas conhecidos |
 
 ## `context/`
 

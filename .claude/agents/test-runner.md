@@ -14,9 +14,11 @@ arquivos, **não** roda git e **não** tenta corrigir nada.
    - `cargo clippy --manifest-path host/Cargo.toml --all-targets -- -D warnings`
    - `cargo test --manifest-path host/Cargo.toml`
 2. Firmware — **só** se o pedido mandar ou disser que `firmware/` mudou. Um build por alvo
-   afetado (`esp32`, `esp32c3`, `esp32c5`, `esp32c6`, `esp32s3`, `esp32p4`, `esp32h2`).
-   O comando exato no Windows (ambiente do ESP-IDF ativado) é fixado no M0 e escrito aqui;
-   até lá, diga "firmware: comando ainda não definido (M0)". Timeout de 600000 ms por alvo.
+   afetado; alvos no build hoje: `esp32`, `esp32c3`, `esp32c6`, `esp32s3` (C5/P4 quando
+   entrarem). Pelo Bash, exatamente assim (troque `<t>` nos três lugares; timeout 600000 ms):
+   `powershell.exe -NoProfile -Command ". ./scripts/Enable-Idf.ps1; idf.py -C firmware -B firmware/build-<t> -D SDKCONFIG=build-<t>/sdkconfig set-target <t> build; exit $LASTEXITCODE"`
+   O `exit $LASTEXITCODE` é o que faz o código de saída do `idf.py` chegar ao Bash. Para o
+   resumo, a linha `devkit_tester_fw.bin binary size 0x... bytes`.
 
 Não use `cd`, nem pipes que escondam o código de saída. Só repita com mais verbosidade se a
 saída não mostrar a causa.
@@ -28,7 +30,8 @@ saída não mostrar a causa.
 - cargo test: `test <caminho> ... FAILED` e a mensagem do panic/assert.
 - idf.py: primeiro `error:` de cada arquivo; no fim, tamanho do binário se o build passar.
 - **Ambiente** (não é falha de código): `cargo`/`idf.py` não encontrado, IDF não ativado,
-  download falhou. Diga que é ambiente e qual comando falhou.
+  `Enable-Idf.ps1` falhou (`ESP-IDF not found`, venv não encontrado), `os error 4551`
+  (Smart App Control), download falhou. Diga que é ambiente e qual comando falhou.
 
 ## Formato da resposta (máximo ~30 linhas)
 Tudo passou: uma linha
