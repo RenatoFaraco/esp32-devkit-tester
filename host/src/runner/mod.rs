@@ -24,9 +24,17 @@
 //! [`run_board`] tests one of them in sequence: primary port first, then the others, waiting
 //! for the native port to re-enumerate after each hard reset.
 //!
-//! The threaded runner with events (ADR-011 §5) comes with #20.
+//!
+//! # Threads and events (#20, ADR-011 §5)
+//! The functions above are sequential and blocking. [`run_board`] and [`run_suites`] report what
+//! they do to an observer (`&mut dyn FnMut(Progress)`) without changing their logic;
+//! [`worker`] runs them on a thread of their own and turns that [`Progress`] into
+//! [`worker::Event`]s for the UI, and [`watch`] lists the ports on another thread (hot-plug,
+//! never opening a port).
 
 pub mod group;
+pub mod watch;
+pub mod worker;
 
 pub use self::group::{
     Board, Grouping, Identified, POLL_INTERVAL, PreGroup, REENUMERATE_TIMEOUT, identify, merge,
@@ -53,6 +61,21 @@ pub const SKIP_NO_USB_SERIAL_JTAG: &str =
 
 /// SKIP reason when the chip has USB-Serial/JTAG but no native port is connected (spec §4).
 pub const SKIP_NATIVE_NOT_CONNECTED: &str = "native USB not connected on this board";
+
+/// What the runner is doing, reported while it does it (the threaded runner turns it into UI
+/// events). Pure notification: the [`Report`](crate::report::Report) stays the source of truth.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Progress {
+    /// Test `id` is in flight.
+    Started(TestId),
+    /// Test `id` ended with this outcome (the same one the report will carry).
+    Finished(TestResult),
+    /// The runner is waiting for `port` to come back after a hard reset (it re-enumerates).
+    Waiting {
+        /// The port as it was enumerated before the reset.
+        port: PortDesc,
+    },
+}
 
 /// Why a port of the board gave no MAC.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -350,13 +373,23 @@ impl std::error::Error for Interrupted {}
 /// `not run: flash/jedec-id failed`. A test `run` refuses (not in the plan, already finished)
 /// is a runner bug: it trips a `debug_assert!` and is left alone in release builds.
 /// The hard reset is not done here: the caller does it in every case.
+///
+/// `observer` hears [`Progress::Started`] when a test begins and [`Progress::Finished`] when
+/// its outcome is recorded. Tests closed by [`Run::abort`] are not announced here: the caller
+/// reads them from `run` (see [`run_board`]).
 pub fn run_suites(
     probe: &mut dyn Probe,
     caps: &ChipCaps,
     clock: &dyn Clock,
     run: &mut Run,
+    observer: &mut dyn FnMut(Progress),
 ) -> Result<(), Interrupted> {
-    let mut session = Session { probe, clock, run };
+    let mut session = Session {
+        probe,
+        clock,
+        run,
+        observer,
+    };
     let chip = caps.chip;
 
     if let Some((identity, ms)) = session.read(CHIP_IDENTITY, "chip identity read", |probe| {
@@ -510,11 +543,12 @@ fn size_text(bytes: u64) -> String {
     }
 }
 
-/// One run of the board suites: the probe, the clock and the run being filled.
+/// One run of the board suites: the probe, the clock, the run being filled and who listens.
 struct Session<'a> {
     probe: &'a mut dyn Probe,
     clock: &'a dyn Clock,
     run: &'a mut Run,
+    observer: &'a mut dyn FnMut(Progress),
 }
 
 impl Session<'_> {
@@ -566,13 +600,19 @@ impl Session<'_> {
     fn begin(&mut self, id: TestId) -> bool {
         let started = self.run.start(id);
         debug_assert!(started.is_ok(), "runner bug: {started:?}");
+        if started.is_ok() {
+            (self.observer)(Progress::Started(id));
+        }
         started.is_ok()
     }
 
     /// Records the outcome of `id`; a refusal is a runner bug (debug assertion).
     fn record(&mut self, id: TestId, outcome: Outcome) {
-        let finished = self.run.finish(id, outcome);
+        let finished = self.run.finish(id, outcome.clone());
         debug_assert!(finished.is_ok(), "runner bug: {finished:?}");
+        if finished.is_ok() {
+            (self.observer)(Progress::Finished(TestResult { id, outcome }));
+        }
     }
 }
 
@@ -814,7 +854,7 @@ mod tests {
         for test in port_tests(Some(caps), mac_of(&sync), &[sync]) {
             run.finish(test.id, test.outcome).unwrap();
         }
-        let result = run_suites(&mut probe, caps, clock, &mut run);
+        let result = run_suites(&mut probe, caps, clock, &mut run, &mut |_| {});
         let reset = match probe.hard_reset() {
             Ok(()) => HardReset::done(),
             Err(error) => HardReset::not_done(&error.to_string()),

@@ -26,6 +26,7 @@
 //! a few places; every call into it goes through [`shield`], so a malformed reply becomes a
 //! [`ProbeError::Protocol`] instead of taking the host down.
 
+use std::cell::Cell;
 use std::error::Error as StdError;
 use std::io;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -297,11 +298,36 @@ fn abandon(conn: &mut Connection) {
 /// Runs a call into espflash, turning a panic into [`ProbeError::Protocol`].
 ///
 /// espflash slices some replies by lengths the board sends (e.g. the response header of
-/// `GET_SECURITY_INFO`), so a corrupted reply could panic inside it.
+/// `GET_SECURITY_INFO`), so a corrupted reply could panic inside it. While `f` runs,
+/// [`in_shield`] is true on this thread, so a panic hook can stay quiet about a panic that is
+/// about to be caught (see `probe::quiet_shielded_panics`).
 pub(crate) fn shield<T>(f: impl FnOnce() -> T) -> Result<T, ProbeError> {
+    SHIELD_DEPTH.with(|depth| depth.set(depth.get().saturating_add(1)));
+    // Dropped after `catch_unwind` returns, on both paths.
+    let _guard = ShieldGuard;
     catch_unwind(AssertUnwindSafe(f)).map_err(|_| {
         ProbeError::Protocol("malformed reply from the ROM (espflash panicked)".to_owned())
     })
+}
+
+thread_local! {
+    /// How many [`shield`] calls are active on this thread (they may nest).
+    static SHIELD_DEPTH: Cell<u32> = const { Cell::new(0) };
+}
+
+/// Leaves one level of [`shield`] when dropped.
+struct ShieldGuard;
+
+impl Drop for ShieldGuard {
+    fn drop(&mut self) {
+        SHIELD_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
+    }
+}
+
+/// True while a [`shield`] call is running on the current thread: a panic now will be caught
+/// and turned into a [`ProbeError::Protocol`].
+pub(crate) fn in_shield() -> bool {
+    SHIELD_DEPTH.with(|depth| depth.get() > 0)
 }
 
 /// Whether `name` is still enumerated by the OS. An enumeration error counts as "listed", so it
@@ -940,6 +966,20 @@ mod tests {
         std::panic::set_hook(hook);
         assert!(matches!(result, Err(ProbeError::Protocol(_))));
         assert_eq!(shield(|| 7), Ok(7));
+    }
+
+    #[test]
+    fn in_shield_is_true_only_inside_shield_even_nested_or_after_a_panic() {
+        assert!(!in_shield());
+        assert_eq!(shield(in_shield), Ok(true));
+        assert_eq!(shield(|| shield(in_shield)), Ok(Ok(true)));
+        assert!(!in_shield());
+        let hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let caught: Result<(), ProbeError> = shield(|| panic!("malformed"));
+        std::panic::set_hook(hook);
+        assert!(caught.is_err());
+        assert!(!in_shield(), "the depth is restored after a caught panic");
     }
 
     #[test]

@@ -116,7 +116,14 @@ fn main() -> ExitCode {
 
     let clock = SystemClock::new();
     let mut enumerate = || transport::enumerate().unwrap_or_default();
-    let report = runner::run_board(&mut probe, board, &clock, &clock, &mut enumerate);
+    let report = runner::run_board(
+        &mut probe,
+        board,
+        &clock,
+        &clock,
+        &mut enumerate,
+        &mut |_| {},
+    );
     print_report(&style, board, &report);
     ExitCode::from(report.exit_code())
 }

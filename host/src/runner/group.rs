@@ -16,20 +16,22 @@
 //!    reset makes the native port vanish and come back (`hardware.md`), so it is looked for again
 //!    by USB serial number, never by name, for at most [`REENUMERATE_TIMEOUT`].
 //!
-//! Sequential and blocking on purpose: it runs on the runner's thread (the threaded runner with
-//! events is #20). Every source of I/O is injected (probe factory, enumeration, clock, sleeper),
-//! so the whole flow is tested without a board and without sleeping.
+//! Sequential and blocking on purpose: it runs on the runner's thread ([`super::worker`]), which
+//! forwards the [`Progress`] reported by [`run_board`] to the UI. Every source of I/O is injected
+//! (probe factory, enumeration, clock, sleeper), so the whole flow is tested without a board and
+//! without sleeping.
 
 use std::time::Duration;
 
 use super::{
-    BOARD_TESTS, Clock, PortSync, Sleeper, SyncError, UART_BRIDGE, USB_SERIAL_JTAG, catalog,
-    port_tests, run_suites, sync_port,
+    BOARD_TESTS, Clock, PortSync, Progress, Sleeper, SyncError, UART_BRIDGE, USB_SERIAL_JTAG,
+    catalog, port_tests, run_suites, sync_port,
 };
 use crate::chips::{Chip, ChipCaps};
 use crate::probe::{Probe, ProbeError};
 use crate::report::{
-    BoardInfo, ChipInfo, HardReset, Outcome, PortInfo, PortKind, Report, Run, SafeText, TestResult,
+    BoardInfo, ChipInfo, HardReset, Outcome, PortInfo, PortKind, Report, Run, SafeText, TestId,
+    TestResult,
 };
 use crate::transport::{Mac, PortClass, PortDesc, classify, trusted_serial};
 
@@ -316,18 +318,46 @@ pub fn port_info(port: &PortDesc, primary: bool) -> Option<PortInfo> {
 ///
 /// `probe` makes a fresh [`Probe`] per session; `enumerate` lists the ports (an OS error is an
 /// empty list); `clock` times the suites and the wait; `sleeper` pauses between polls.
+///
+/// `observer` hears the run as it happens: [`Progress::Started`] when a port test or a suite
+/// test begins, [`Progress::Waiting`] before waiting for a port to come back, and
+/// [`Progress::Finished`] once per test of the report. A test's outcome is announced as soon as
+/// it is final (the primary bridge right after its sync, the suite tests as they end); the rest
+/// (the other ports, tests closed by an abort or skipped) right before returning, in report
+/// order. The announced outcomes are the report's; the logic does not depend on the observer.
 pub fn run_board(
     probe: &mut dyn FnMut(&PortDesc) -> Box<dyn Probe>,
     board: &Board,
     clock: &dyn Clock,
     sleeper: &dyn Sleeper,
     enumerate: &mut dyn FnMut() -> Vec<PortDesc>,
+    observer: &mut dyn FnMut(Progress),
 ) -> Report {
     let mut syncs = Vec::with_capacity(1 + board.others().len());
+    let mut announced: Vec<TestId> = Vec::new();
+    let mut notify = |progress: Progress| {
+        if let Progress::Finished(test) = &progress {
+            announced.push(test.id);
+        }
+        observer(progress);
+    };
 
+    let primary_test = port_test_of(board.primary());
+    notify(Progress::Started(primary_test));
     let mut session = probe(board.primary());
     let (sync, primary_chip) = sync_session(session.as_mut(), board.primary(), true);
-    let suites = primary_chip.map(|chip| board_suites(session.as_mut(), chip.caps(), clock));
+    if primary_test == UART_BRIDGE {
+        // Final already: it depends only on this sync and the board MAC (see `port_tests`).
+        let caps = primary_chip.or(board.chip()).map(Chip::caps);
+        if let Some(test) = port_tests(caps, Some(board.mac()), std::slice::from_ref(&sync))
+            .into_iter()
+            .find(|test| test.id == UART_BRIDGE)
+        {
+            notify(Progress::Finished(test));
+        }
+    }
+    let suites =
+        primary_chip.map(|chip| board_suites(session.as_mut(), chip.caps(), clock, &mut notify));
     let mut reset = reset_outcome(session.hard_reset());
     drop(session);
     syncs.push(sync);
@@ -335,7 +365,11 @@ pub fn run_board(
 
     for port in board.others() {
         let current = match classify(port) {
-            PortClass::Native => await_port(port, enumerate, clock, sleeper),
+            PortClass::Native => {
+                notify(Progress::Started(USB_SERIAL_JTAG));
+                notify(Progress::Waiting { port: port.clone() });
+                await_port(port, enumerate, clock, sleeper)
+            }
             _ => Ok(port.clone()),
         };
         match current {
@@ -370,10 +404,7 @@ pub fn run_board(
         catalog(caps, board.has_bridge()),
     );
     let suite_tests = suites.unwrap_or_else(|| {
-        let cause = match classify(board.primary()) {
-            PortClass::Native => USB_SERIAL_JTAG,
-            _ => UART_BRIDGE,
-        };
+        let cause = primary_test;
         let reason = format!("not run: {cause} failed");
         BOARD_TESTS
             .iter()
@@ -390,7 +421,22 @@ pub fn run_board(
         let finished = run.finish(test.id, test.outcome);
         debug_assert!(finished.is_ok(), "runner bug: {finished:?}");
     }
-    run.complete(reset)
+    let report = run.complete(reset);
+    for test in report.tests() {
+        if !announced.contains(&test.id) {
+            observer(Progress::Finished(test.clone()));
+        }
+    }
+    report
+}
+
+/// The `port` test a port answers for: `port/usb-serial-jtag` on the native port,
+/// `port/uart-bridge` otherwise.
+fn port_test_of(port: &PortDesc) -> TestId {
+    match classify(port) {
+        PortClass::Native => USB_SERIAL_JTAG,
+        _ => UART_BRIDGE,
+    }
 }
 
 /// [`sync_port`], then (when `want_chip`) the chip read on the same session. A failed chip read
@@ -415,7 +461,12 @@ fn sync_session(
 
 /// The board suites on an open session, in a run of their own: an aborted session stops the
 /// suites (`not run`) but never the port tests of the other ports.
-fn board_suites(probe: &mut dyn Probe, caps: &ChipCaps, clock: &dyn Clock) -> Vec<TestResult> {
+fn board_suites(
+    probe: &mut dyn Probe,
+    caps: &ChipCaps,
+    clock: &dyn Clock,
+    observer: &mut dyn FnMut(Progress),
+) -> Vec<TestResult> {
     let board = BoardInfo {
         chip: None,
         mac: None,
@@ -423,7 +474,7 @@ fn board_suites(probe: &mut dyn Probe, caps: &ChipCaps, clock: &dyn Clock) -> Ve
     };
     let mut run = Run::new(env!("CARGO_PKG_VERSION"), board, BOARD_TESTS.to_vec());
     // An interruption is already recorded in `run` (abort); the caller does the hard reset.
-    let _interrupted = run_suites(probe, caps, clock, &mut run);
+    let _interrupted = run_suites(probe, caps, clock, &mut run, observer);
     run.complete(HardReset::done()).tests().to_vec()
 }
 
@@ -913,7 +964,14 @@ mod tests {
         ]);
         let bench = Bench::new(&[("COM13", fake("esp32c6")), ("COM12", fake("esp32c6"))]);
         let time = FakeTime::default();
-        let report = run_board(&mut bench.factory(), &board, &time, &time, &mut enumerate);
+        let report = run_board(
+            &mut bench.factory(),
+            &board,
+            &time,
+            &time,
+            &mut enumerate,
+            &mut |_| {},
+        );
 
         assert_eq!(
             report.summary().to_string(),
@@ -977,7 +1035,14 @@ mod tests {
         let mut enumerate = script(vec![vec![ch343("COM13")]]);
         let bench = Bench::new(&[("COM13", fake("esp32c6"))]);
         let time = FakeTime::default();
-        let report = run_board(&mut bench.factory(), &board, &time, &time, &mut enumerate);
+        let report = run_board(
+            &mut bench.factory(),
+            &board,
+            &time,
+            &time,
+            &mut enumerate,
+            &mut |_| {},
+        );
 
         let native = outcome(&report, USB_SERIAL_JTAG);
         assert_eq!(native.state(), State::Fail);
@@ -1013,7 +1078,14 @@ mod tests {
             ("COM11", fake("esp32c6")),
         ]);
         let time = FakeTime::default();
-        let report = run_board(&mut bench.factory(), &board, &time, &time, &mut enumerate);
+        let report = run_board(
+            &mut bench.factory(),
+            &board,
+            &time,
+            &time,
+            &mut enumerate,
+            &mut |_| {},
+        );
 
         let bridge = outcome(&report, UART_BRIDGE);
         assert_eq!(bridge.state(), State::Fail);
@@ -1051,7 +1123,14 @@ mod tests {
         )]);
         let time = FakeTime::default();
         let mut enumerate = script(vec![vec![]]);
-        let report = run_board(&mut bench.factory(), &board, &time, &time, &mut enumerate);
+        let report = run_board(
+            &mut bench.factory(),
+            &board,
+            &time,
+            &time,
+            &mut enumerate,
+            &mut |_| {},
+        );
         assert_eq!(report.board().chip, None);
         assert_eq!(report.tests().len(), 11);
         assert_eq!(
