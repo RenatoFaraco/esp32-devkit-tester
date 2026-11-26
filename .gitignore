@@ -22,6 +22,8 @@ desktop.ini
 *.swp
 .idea/
 .vscode/ipch
+# machine-specific (absolute paths written by the CMake extension)
+.vscode/settings.json
 
 # --- Claude Code: personal overrides stay local ---
 .claude/settings.local.json

@@ -24,6 +24,8 @@
 
 ## 3. C (firmware)
 - C17, `-Wall -Wextra -Werror`; sem VLA; `static` em tudo que não é API.
+  No IDF isso exige religar como erro os avisos que as flags globais do IDF desligam: todo
+  componente nosso copia a lista de `-Werror=<x>` de `firmware/main/CMakeLists.txt` (ADR-001).
 - Prefixo `dkt_` em funções, tipos e componentes (`dkt_report_test()`, `dkt_mem_result_t`);
   macros e constantes em `DKT_MAIUSCULAS`; arquivos `snake_case`.
 - Tipos de largura fixa (`uint32_t`), `bool` de `<stdbool.h>`, `const` sempre que couber.

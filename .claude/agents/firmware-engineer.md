@@ -23,6 +23,9 @@ toca o que sai pela serial.
 
 ## Regras do firmware
 1. **C17**, `-Wall -Wextra -Werror`, sem VLA, `static` em tudo que não é API, prefixo `dkt_`.
+   As flags globais do IDF desligam avisos (`-Wno-unused-parameter`, `-Wno-error=unused-variable`…)
+   e `-Werror` não desfaz `-Wno-error=<x>`: todo componente novo copia a lista de `-Werror=<x>`
+   de `firmware/main/CMakeLists.txt` (ADR-001). Prove com uma violação proposital antes de entregar.
 2. **Testes de memória** (SRAM, PSRAM): padrões march (ex.: March C-), endereços e larguras
    alinhados, `volatile` onde o compilador poderia otimizar a leitura, cache considerado
    (PSRAM passa pelo cache/MMU: escrever, invalidar/escrever de volta, ler). Nunca testar a

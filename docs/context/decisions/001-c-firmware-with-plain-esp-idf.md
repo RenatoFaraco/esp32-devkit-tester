@@ -1,5 +1,5 @@
 # ADR-001: Firmware de teste em C com ESP-IDF puro (`idf.py`), sem PlatformIO
-- Status: proposta (confirmar no M0)
+- Status: aceita (confirmada no M0, 2026-11-26)
 - Data: 2026-11-26
 
 ## Contexto
@@ -25,3 +25,17 @@ escolha foi PlatformIO (ADR-001 de lá), que funcionou bem para um alvo só (C3)
   versão e escreve o comando exato no `CLAUDE.md` e no `test-runner`.
 - Um binário por chip: o host escolhe qual gravar pelo chip detectado (v0.2).
 - Diferença em relação ao esp32-logcat, registrada para não parecer inconsistência.
+
+## Confirmado no M0 (issue #6)
+- O hello compila com `idf.py` puro no **ESP-IDF v5.5.2** (GCC 14.2.0) para esp32, esp32c3,
+  esp32c6 e esp32s3. C5 e P4 entram no bring-up de cada placa, na mesma versão.
+- **Versão fixada no próprio projeto:** `firmware/CMakeLists.txt` falha se o IDF for < 5.5.2
+  e avisa se não for 5.5.x; o CI usa a imagem `espressif/idf:v5.5.2`.
+- **Uma pasta e um sdkconfig por alvo**, porque o `set-target` reescreve o `sdkconfig` do
+  projeto: `idf.py -B build-<alvo> -D SDKCONFIG=build-<alvo>/sdkconfig set-target <alvo> build`.
+- **`-Wall -Wextra -Werror` não basta dentro do IDF.** As flags globais do IDF entram antes
+  das nossas e desligam avisos para todos os componentes (`-Wno-unused-parameter`,
+  `-Wno-sign-compare`, `-Wno-error=unused-variable`…). No GCC um `-Werror` genérico não desfaz um
+  `-Wno-error=<x>` específico, então cada componente nosso religa esses avisos um a um como
+  `-Werror=<x>` (lista em `firmware/main/CMakeLists.txt`). Os componentes do IDF ficam como estão.
+- Nenhum motivo para voltar ao PlatformIO.
