@@ -93,5 +93,8 @@ Do lado do hardware:
   entregar, vale o item 6 e o agrupamento antes da sondagem fica vazio no Windows.
 - Formato do número de série no descritor (com ou sem `:`, maiúsculas) em cada chip da
   bancada; a normalização do item 1 cobre as variações vistas no bring-up.
+  Conferido na C6 (2026-11-26, PnP do Windows): `E8:F6:0A:F7:FF:D4`, maiúsculas com `:`, no
+  dispositivo composto pai; igual ao MAC base lido pelo ROM. Falta C3/S3 pela porta nativa e
+  se o `serialport` o entrega (item acima).
 - Localização exata do MAC de fábrica no eFuse de cada chip (TRM), registrada na tabela de
   capacidades.

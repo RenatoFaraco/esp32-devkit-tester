@@ -1,0 +1,60 @@
+{
+  "format_version": 1,
+  "captured": {
+    "date": "2026-11-26",
+    "tool": "esptool.py v4.12.dev1 / espefuse.py v4.12.dev1 (ESP-IDF v5.5.2)",
+    "commands": [
+      "python -m esptool --port <PORT> --baud 115200 --no-stub chip_id",
+      "python -m esptool --port <PORT> --baud 115200 --no-stub flash_id",
+      "python -m espefuse --port <PORT> --baud 115200 dump",
+      "python -m espefuse --port <PORT> --baud 115200 summary --format json"
+    ],
+    "by": "hand, bring-up part 1 (issue #29)",
+    "notes": "esptool lists 'Unknown Embedded Flash' because FLASH_CAP=0 is not in its table; FLASH_CAP=0 means no in-package flash (flash is external)."
+  },
+  "board": {
+    "model": "ESP32-C6 DevKit (native USB-Serial/JTAG port; UART port not connected in this capture)",
+    "ports": [
+      {
+        "vid": "303A",
+        "pid": "1001",
+        "bridge": null,
+        "usb_serial": "E8:F6:0A:F7:FF:D4",
+        "usb_serial_location": "parent composite device (USB\\VID_303A&PID_1001\\<serial>); the COM interface (MI_00) has a generated instance id",
+        "interfaces": ["MI_00 CDC serial (usbser)", "MI_02 JTAG (WinUSB)"],
+        "driver": "usbser (Microsoft)"
+      }
+    ]
+  },
+  "chip": {
+    "family": "esp32c6",
+    "description": "ESP32-C6 (QFN40)",
+    "revision": { "major": 0, "minor": 2 },
+    "package_version": 0,
+    "crystal_mhz": 40,
+    "features": ["Wi-Fi 6", "BT 5 (LE)", "IEEE802.15.4", "Single Core + LP Core", "160MHz", "Unknown Embedded Flash"],
+    "mac": "e8:f6:0a:f7:ff:d4",
+    "mac_eui64": "e8:f6:0a:ff:fe:f7:ff:d4",
+    "embedded_flash": false,
+    "embedded_psram": false
+  },
+  "efuse_blocks": {
+    "BLOCK0": ["00000000", "00000000", "00000000", "00000000", "00000000", "00000000"],
+    "BLOCK1": ["0af7ffd4", "fffee8f6", "08961736", "18080000", "00000000", "00000000"],
+    "BLOCK2": ["c15c3b70", "0d594dce", "40401bbf", "2391a1a1", "9456bd5d", "111d4671", "0483c0d8", "11111310"],
+    "BLOCK3": ["00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000"],
+    "BLOCK4": ["00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000"],
+    "BLOCK5": ["00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000"],
+    "BLOCK6": ["00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000"],
+    "BLOCK7": ["00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000"],
+    "BLOCK8": ["00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000"],
+    "BLOCK9": ["00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000"],
+    "BLOCK10": ["00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000"]
+  },
+  "flash": {
+    "jedec_manufacturer": "68",
+    "jedec_device": "4018",
+    "size_bytes": 16777216
+  },
+  "registers": []
+}

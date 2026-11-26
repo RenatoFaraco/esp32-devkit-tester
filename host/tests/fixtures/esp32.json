@@ -1,0 +1,44 @@
+{
+  "format_version": 1,
+  "captured": {
+    "date": "2026-11-26",
+    "tool": "esptool.py v4.12.dev1 / espefuse.py v4.12.dev1 (ESP-IDF v5.5.2)",
+    "commands": [
+      "python -m esptool --port <PORT> --baud 115200 --no-stub chip_id",
+      "python -m esptool --port <PORT> --baud 115200 --no-stub flash_id",
+      "python -m espefuse --port <PORT> --baud 115200 dump",
+      "python -m espefuse --port <PORT> --baud 115200 summary --format json"
+    ],
+    "by": "hand, bring-up part 1 (issue #26)"
+  },
+  "board": {
+    "model": "ESP32 DevKit V1",
+    "ports": [
+      { "vid": "1A86", "pid": "55D4", "bridge": "CH9102", "usb_serial": "5B53026573", "driver": "CH343SER 2.1.2025.7" }
+    ]
+  },
+  "chip": {
+    "family": "esp32",
+    "description": "ESP32-D0WD-V3",
+    "revision": { "major": 3, "minor": 1 },
+    "package_version": 1,
+    "crystal_mhz": 40,
+    "features": ["WiFi", "BT", "Dual Core", "240MHz", "VRef calibration in efuse", "Coding Scheme None"],
+    "mac": "1c:c3:ab:d2:25:b4",
+    "embedded_flash": false,
+    "embedded_psram": false
+  },
+  "efuse_blocks": {
+    "BLOCK0": ["00000000", "abd225b4", "004c1cc3", "0000a200", "00000439", "01100000", "00000004"],
+    "BLOCK1": ["00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000"],
+    "BLOCK2": ["00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000"],
+    "BLOCK3": ["00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000"]
+  },
+  "flash": {
+    "jedec_manufacturer": "5E",
+    "jedec_device": "4016",
+    "size_bytes": 4194304,
+    "voltage": "3.3V (strapping pin)"
+  },
+  "registers": []
+}

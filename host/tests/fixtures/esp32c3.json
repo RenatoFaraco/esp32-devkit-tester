@@ -1,0 +1,53 @@
+{
+  "format_version": 1,
+  "captured": {
+    "date": "2026-11-26",
+    "tool": "esptool.py v4.12.dev1 / espefuse.py v4.12.dev1 (ESP-IDF v5.5.2)",
+    "commands": [
+      "python -m esptool --port <PORT> --baud 115200 --no-stub chip_id",
+      "python -m esptool --port <PORT> --baud 115200 --no-stub flash_id",
+      "python -m espefuse --port <PORT> --baud 115200 dump",
+      "python -m espefuse --port <PORT> --baud 115200 summary --format json"
+    ],
+    "by": "hand, bring-up part 1 (issue #27)"
+  },
+  "board": {
+    "model": "ESP32-C3 DevKit (CH340K UART port; native USB port not connected in this capture)",
+    "ports": [
+      { "vid": "1A86", "pid": "7522", "bridge": "CH340K", "usb_serial": null, "driver": "CH341SER 3.9.2024.9" }
+    ]
+  },
+  "chip": {
+    "family": "esp32c3",
+    "description": "ESP32-C3 (QFN32)",
+    "revision": { "major": 0, "minor": 4 },
+    "package_version": 0,
+    "crystal_mhz": 40,
+    "features": ["WiFi", "BLE", "Embedded Flash 4MB (XMC)"],
+    "mac": "80:53:e0:0a:5d:70",
+    "embedded_flash": true,
+    "embedded_psram": false
+  },
+  "efuse_blocks": {
+    "BLOCK0": ["00000000", "00000000", "00000000", "00000000", "80000000", "00000000"],
+    "BLOCK1": ["e00a5d70", "00008053", "00000000", "4b100000", "90502219", "00070a81"],
+    "BLOCK2": ["5ad30f18", "0210a292", "7257daa2", "424a1fad", "18550e11", "6a7a2c85", "36689067", "0000000a"],
+    "BLOCK3": ["00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000"],
+    "BLOCK4": ["00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000"],
+    "BLOCK5": ["00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000"],
+    "BLOCK6": ["00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000"],
+    "BLOCK7": ["00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000"],
+    "BLOCK8": ["00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000"],
+    "BLOCK9": ["00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000"],
+    "BLOCK10": ["00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000", "00000000"]
+  },
+  "flash": {
+    "jedec_manufacturer": "46",
+    "jedec_device": "4016",
+    "size_bytes": 4194304,
+    "efuse_vendor": "XMC",
+    "efuse_capacity": "4M",
+    "efuse_temp_grade": "105C"
+  },
+  "registers": []
+}
