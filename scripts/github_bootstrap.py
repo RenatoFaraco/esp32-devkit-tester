@@ -633,6 +633,29 @@ ISSUES = [
     ),
     (
         M1,
+        ["docs", "board"],
+        "docs: record the bench results observed on each board",
+        body(
+            "Write down what the tester actually saw on every bench board, so the v0.1 evidence and the traps live in the repo, not in chat screenshots.",
+            [
+                "New section per board in `docs/context/hardware.md` (\"Resultados da bancada\"): date, host commit, port combinations tried (bridge only, native only, both, one board alone, two boards on a hub with one unplugged mid-run), the report (passed/failed/skipped) and the values read",
+                "ESP32 DevKit V1 (CH9102 `1A86:55D4`): ESP32-D0WD-V3 v3.1, package 1, JEDEC `0x5E4016` 4 MB, 10 passed + `usb-serial-jtag` SKIP (no USB-Serial/JTAG on the chip); connect ~6.4 s (ROM has no `GET_SECURITY_INFO`, ~3 s timeout inside espflash; auto-reset needs several tries); identification can time out right after plugging, fixed by one retry",
+                "ESP32-C3 (CH340K `1A86:7522` + native): v0.4, 4 MB embedded XMC `0x464016`, 11/11; CH340K reports a fake USB serial (`\"6\"`), never used; the esp32-logcat firmware resumed after the run",
+                "ESP32-C6 (CH343 `1A86:55D3` + native): v0.2, `0x684018` 16 MB, 11/11; the native port re-enumerates < 2 s after any hard reset (even through the bridge); unplugging another board from the same hub made the native port briefly unopenable (fixed by retrying by serial number); the app image header says 2 MB on a 16 MB flash",
+                "ESP32-S3 (CH343 + USB): v0.2, PSRAM 8 MB AP_3v3 in package, `0x684018` 16 MB, 10 passed + `usb-serial-jtag` SKIP: the app uses USB OTG (TinyUSB, `303A:4001`, serial `123456`), so the GPIO19/20 PHY is not on USB-Serial/JTAG and the port is listed as \"other\", never probed",
+                "Each finding links to the ADR or code that handles it (ADR-008/009, `runner/group.rs`, `transport::PortClass::EspressifApp`)",
+            ],
+            [
+                "`hardware.md` has a results section for ESP32, C3, C6 and S3 (C5/P4 added when they arrive)",
+                "Inventory rows updated with exact board models where known",
+                "Bring-up issues #26, #27, #29, #30 (part 2) link to their section",
+            ],
+            "PRD v0.1 §7 criteria 1–4 · hardware.md · ADR-008 · ADR-009",
+            depends="runner thread and start screen (#19/#20)",
+        ),
+    ),
+    (
+        M1,
         ["board", "test"],
         "test: verify no byte is written to flash",
         body(
