@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo fmt --manifest-path host/Cargo.toml *)",
+      "Bash(cargo clippy --manifest-path host/Cargo.toml *)",
+      "Bash(cargo test --manifest-path host/Cargo.toml*)",
+      "Bash(cargo build --manifest-path host/Cargo.toml*)"
+    ]
+  }
+}

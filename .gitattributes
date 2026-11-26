@@ -1,0 +1,17 @@
+# Normalize text to LF in the repository and working tree, regardless of core.autocrlf.
+* text=auto eol=lf
+
+# Windows-only scripts keep CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary artifacts
+*.bin binary
+*.elf binary
+*.png binary
+*.jpg binary
+*.gif binary
+
+# Board captures: keep the exact bytes (the ROM and the ESP-IDF console send CRLF)
+host/tests/fixtures/** binary

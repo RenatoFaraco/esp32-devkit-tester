@@ -1,0 +1,27 @@
+# --- ESP-IDF / firmware ---
+firmware/build/
+firmware/build-*/
+# idf.py generates sdkconfig from sdkconfig.defaults*; only the defaults are versioned
+firmware/sdkconfig
+firmware/sdkconfig.old
+firmware/managed_components/
+firmware/dependencies.lock
+
+# --- Rust / host ---
+host/target/
+**/*.rs.bk
+
+# --- Secrets ---
+.env
+*.local.toml
+
+# --- OS / editors ---
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+.idea/
+.vscode/ipch
+
+# --- Claude Code: personal overrides stay local ---
+.claude/settings.local.json
