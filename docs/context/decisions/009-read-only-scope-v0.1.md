@@ -98,6 +98,7 @@ ID da flash por `spi_command`, que escreve `USR`/`USR2`/`W0`/`CMD` e restaura s�
 - **Secure Download Mode** (eFuse): o ROM recusa parte dos comandos; confirmar quais (em
   especial `READ_REG`). Testes que dependem deles viram SKIP com motivo, não FAIL.
 - Hard reset: ponte = RTS 1 → 100 ms → 0; nativa = DTR 0, RTS 1, DTR 0, RTS 1, 100 ms, RTS 0.
-  Conferido na C3 e na C6 (2026-11-26) pelas duas portas: o ROM responde de novo na próxima
-  conexão e a porta nativa re-enumera (ver `hardware.md`). Falta confirmar visualmente que a
-  aplicação volta a rodar (C3 com o firmware do esp32-logcat).
+  **Conferido na C3 e na C6 (2026-11-26) pelas duas portas:** a porta nativa re-enumera (ver
+  `hardware.md`) e a aplicação volta a rodar. A C6 reinicia com `rst:0x1 (POWERON),
+  boot:… (SPI_FAST_FLASH_BOOT)`, o bootloader do IDF carrega a mesma imagem e o app retoma
+  (capturas do esp32-logcat pela COM13 e pela COM11); a C3 volta ao firmware do esp32-logcat.
