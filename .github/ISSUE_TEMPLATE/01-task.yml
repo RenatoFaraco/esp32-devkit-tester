@@ -1,0 +1,65 @@
+name: "Task"
+description: Planned work on the host, firmware, spec, CI or docs, tied to a milestone.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Title as `<area>: <what>` (e.g. `host: classify serial ports by VID:PID (H2)`), and set the
+        milestone. The scope should fit one PR; split it otherwise.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - host (Rust, TUI, probe)
+        - fw (C / ESP-IDF)
+        - spec (host <-> board contract)
+        - ci (GitHub Actions, tooling)
+        - docs
+        - board (bring-up or validation)
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One or two sentences — what and why.
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      placeholder: |
+        - ...
+        - ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: Verifiable criteria; tests count.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+
+  - type: input
+    id: depends
+    attributes:
+      label: Depends on
+      placeholder: "#12, ADR-008"
+
+  - type: input
+    id: refs
+    attributes:
+      label: Refs
+      placeholder: PRD v0.1 H2 · ADR-007 · hardware.md
+    validations:
+      required: true
