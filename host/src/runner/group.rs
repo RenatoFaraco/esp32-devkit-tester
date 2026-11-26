@@ -6,7 +6,8 @@
 //!
 //! 1. [`pre_group`] (pure, nothing opened): a native port whose USB serial number is a MAC is a
 //!    group with that MAC. A bridge, or a native port with an unreadable serial, is
-//!    `unidentified`. Unknown, non-USB and JTAG-channel ports are `others`: listed, never opened.
+//!    `unidentified`. Unknown, non-USB, JTAG-channel and app-firmware Espressif USB (OTG) ports
+//!    are `others`: listed, never opened.
 //! 2. [`identify`] (only after a user action): each unidentified port is opened once, one at a
 //!    time: connect, MAC, chip, hard reset. A failure is a value with a reason, never a panic.
 //! 3. [`merge`] (pure): an identified port joins the group with the same MAC, or becomes a board
@@ -46,6 +47,14 @@ pub const POLL_INTERVAL: Duration = Duration::from_millis(200);
 /// as it is: the reset did not drop it, or it dropped and came back between two polls.
 pub const VANISH_GRACE: Duration = Duration::from_secs(1);
 
+/// How many sessions [`identify`] opens on a bridge whose connect times out.
+///
+/// Bench, 2026-11-26: an ESP32 DevKit V1 (CH9102) only syncs after several of espflash's reset
+/// attempts (~3 s), and the TUI once got "identification failed: timeout" from it. A marginal
+/// auto-reset circuit (EN/IO0 RC timing) or a board plugged in a moment ago and still booting
+/// can use up every attempt of one connect; a fresh session usually syncs.
+pub const IDENTIFY_ATTEMPTS: u32 = 2;
+
 /// What the enumeration alone says, before any port is opened.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Grouping {
@@ -53,7 +62,8 @@ pub struct Grouping {
     pub groups: Vec<PreGroup>,
     /// Bridges, and native ports whose serial number is not a MAC: need [`identify`].
     pub unidentified: Vec<PortDesc>,
-    /// Unknown VID:PID, non-USB, JTAG channel or ambiguous multi-channel ports: never opened.
+    /// Unknown VID:PID, non-USB, JTAG channel, ambiguous multi-channel and app-firmware
+    /// Espressif USB (OTG) ports: never opened.
     pub others: Vec<PortDesc>,
 }
 
@@ -134,6 +144,10 @@ impl Identified {
 /// Opens each port of `ports` once, in order, to read the MAC (ADR-008 §4): connect, MAC, chip,
 /// then a hard reset back to the application in every case.
 ///
+/// A connect that fails with [`ProbeError::Timeout`] gets one more session (see
+/// [`IDENTIFY_ATTEMPTS`]); a busy or vanished port does not (another program holds it, or it is
+/// gone: trying again at once would not change that).
+///
 /// Call it only after the user asked (each port suffers a reset). `probe` makes a fresh
 /// [`Probe`] for each port. A port that is not a probe candidate is never opened: it comes back
 /// as [`Identified::Failed`].
@@ -150,13 +164,23 @@ pub fn identify(
             });
             continue;
         }
-        let mut session = probe(port);
-        let mac = session.connect(port).and_then(|()| session.mac());
-        let chip = match mac {
-            Ok(_) => session.chip().ok(),
-            Err(_) => None,
+        let mut attempt = 0;
+        let (mac, chip, reset) = loop {
+            attempt += 1;
+            let mut session = probe(port);
+            let connected = session.connect(port);
+            let sync_timed_out = connected == Err(ProbeError::Timeout);
+            let mac = connected.and_then(|()| session.mac());
+            let chip = match mac {
+                Ok(_) => session.chip().ok(),
+                Err(_) => None,
+            };
+            let reset = reset_outcome(session.hard_reset());
+            drop(session);
+            if !sync_timed_out || attempt >= IDENTIFY_ATTEMPTS {
+                break (mac, chip, reset);
+            }
         };
-        let reset = reset_outcome(session.hard_reset());
         identified.push(match mac {
             Ok(mac) => Identified::Found {
                 port: port.clone(),
@@ -290,7 +314,10 @@ pub fn port_info(port: &PortDesc, primary: bool) -> Option<PortInfo> {
     let kind = match class {
         PortClass::Native => PortKind::Native,
         PortClass::Bridge { .. } => PortKind::Bridge,
-        PortClass::JtagInterface { .. } | PortClass::NotUsb | PortClass::Unknown { .. } => {
+        PortClass::JtagInterface { .. }
+        | PortClass::EspressifApp { .. }
+        | PortClass::NotUsb
+        | PortClass::Unknown { .. } => {
             return None;
         }
     };
@@ -917,11 +944,80 @@ mod tests {
                 reason: "identification failed: timeout".to_owned(),
             }]
         );
-        // The hard reset is attempted even though the session never opened.
-        assert_eq!(bench.steps_on("COM13"), [Step::Connect, Step::HardReset]);
+        // Two sessions (the timeout is retried once); the hard reset is attempted in each even
+        // though the session never opened.
+        assert_eq!(
+            bench.steps_on("COM13"),
+            [
+                Step::Connect,
+                Step::HardReset,
+                Step::Connect,
+                Step::HardReset
+            ]
+        );
         let boards = merge(&grouping, &identified);
         assert_eq!(boards.len(), 1);
         assert_eq!(names(boards[0].ports()), ["COM11"]);
+    }
+
+    /// Bench, 2026-11-26: the ESP32 DevKit V1 (CH9102) timed out once on identification. The
+    /// first session times out, the second syncs: the bridge is found.
+    #[test]
+    fn bridge_timeout_is_retried_once_with_a_new_session() {
+        let log: Log = Rc::default();
+        let mut sessions: VecDeque<FakeProbe> = VecDeque::from([
+            fake("esp32").fail_at(Step::Connect, ProbeError::Timeout),
+            fake("esp32"),
+        ]);
+        let mut factory = |port: &PortDesc| -> Box<dyn Probe> {
+            let inner = sessions.pop_front().expect("a third session was opened");
+            Box::new(Logged {
+                name: port.name.clone(),
+                inner,
+                log: Rc::clone(&log),
+            })
+        };
+        let identified = identify(&mut factory, &[ch9102("COM9")]);
+        assert_eq!(
+            identified,
+            [Identified::Found {
+                port: ch9102("COM9"),
+                mac: mac(ESP32_MAC),
+                chip: Some(chip("esp32")),
+                reset: HardReset::done(),
+            }]
+        );
+        let steps: Vec<Step> = log.borrow().iter().map(|(_, step)| *step).collect();
+        assert_eq!(
+            steps,
+            [
+                Step::Connect,
+                Step::HardReset,
+                Step::Connect,
+                Step::Mac,
+                Step::Chip,
+                Step::HardReset
+            ]
+        );
+    }
+
+    /// Only a sync timeout is retried: a busy or vanished port fails at once, in one session.
+    #[test]
+    fn busy_or_gone_bridge_is_not_retried() {
+        for error in [ProbeError::Busy, ProbeError::Disconnected] {
+            let bench =
+                Bench::new(&[("COM9", fake("esp32").fail_at(Step::Connect, error.clone()))]);
+            let identified = identify(&mut bench.factory(), &[ch9102("COM9")]);
+            assert!(
+                matches!(&identified[..], [Identified::Failed { .. }]),
+                "{error:?}"
+            );
+            assert_eq!(
+                bench.steps_on("COM9"),
+                [Step::Connect, Step::HardReset],
+                "{error:?}"
+            );
+        }
     }
 
     #[test]
@@ -934,6 +1030,8 @@ mod tests {
             },
             usb("COM20", 0x0403, 0x6010, None, Some(0)),
             usb("COM21", 0x0403, 0x6010, None, None),
+            // S3 app on the OTG controller (TinyUSB): its serial "123456" is not a MAC.
+            usb("COM14", 0x303A, 0x4001, Some("123456"), Some(0)),
         ];
         let grouping = pre_group(&ports);
         assert!(grouping.groups.is_empty());

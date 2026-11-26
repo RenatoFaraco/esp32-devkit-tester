@@ -56,5 +56,14 @@ Conferir cada linha com o Gerenciador de Dispositivos ao fazer o bring-up.
   `FLASH_CAP = 0`): não confiar na string de features; ler o campo de eFuse.
 - C6 tem MAC de 8 bytes (EUI-64, por causa do 802.15.4) além do MAC base de 6 bytes; a
   identidade da placa (ADR-008) é o MAC base, que é o que aparece no número de série USB.
+- **S3 com app usando USB OTG (TinyUSB CDC):** a porta nativa aparece como `303A:4001`, número de
+  série `123456` (default do TinyUSB, não é MAC), interface 0. O PHY dos GPIO19/20 é um só: o
+  USB-Serial/JTAG (`303A:1001`) só existe quando o PHY não está com o controlador OTG (ROM/modo
+  download, ou app sem OTG). O testador lista essa porta em "Other ports (not tested)" e nunca a
+  abre (2026-11-26).
+- **ESP32 original não tem `GET_SECURITY_INFO`:** perguntado, a ROM não responde e custa 3 s de
+  timeout; o host lê direto o registrador mágico (`0x40001000`), como manda a tabela de chips. O
+  DevKit V1 com CH9102 só sincroniza depois de algumas tentativas de reset (~3 s; conexão inteira
+  ~6,4 s); na identificação o host tenta de novo uma vez quando a conexão dá timeout.
 - 12 V num pino de 3,3 V queima o chip: ponte USB-UART externa
   sempre em 3,3 V, só TX/RX/GND cruzados.

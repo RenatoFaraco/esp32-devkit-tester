@@ -383,6 +383,66 @@ fn list_screen_snapshot() {
     );
 }
 
+/// An S3 whose app runs TinyUSB on the OTG controller (bench, 2026-11-26).
+fn s3_otg(name: &str) -> PortDesc {
+    let mut port = usb(name, 0x303A, 0x4001, "123456");
+    if let Some(usb) = port.usb.as_mut() {
+        usb.product = Some("Dispositivo Serial USB (COM14)".to_owned());
+        usb.interface = Some(0);
+    }
+    port
+}
+
+#[test]
+fn list_screen_snapshot_with_other_ports() {
+    let mut app = App::new();
+    app.on_event(boards_event(&[
+        ch343("COM13"),
+        c6_native(),
+        s3_otg("COM14"),
+        usb("COM5", 0x1234, 0x5678, "A1"),
+    ]));
+    app.on_event(found(ch343("COM13"), C6_MAC, "esp32c6"));
+    let lines = screen_lines(&app);
+    let body: Vec<&str> = lines[2..13].iter().map(String::as_str).collect();
+    assert_eq!(
+        body,
+        [
+            " Boards",
+            " ▸ ● ESP32-C6   e8:f6:0a:f7:ff:d4",
+            "       ├─ COM13  CH343            bridge   primary",
+            "       └─ COM11  USB-Serial/JTAG  native",
+            "",
+            " Other ports (not tested)",
+            "   · COM14  303A:4001        Espressif USB from the app firmware (USB OTG)",
+            "   · COM5   1234:5678        unknown device",
+            "",
+            " 1 board · 2 ports · 0 not identified · 2 other",
+            "",
+        ]
+    );
+    // Listed only: the OTG port never joins a board and nothing asks to identify it.
+    assert_eq!(names(&app.boards()[0]), ["COM13", "COM11"]);
+    assert!(app.never_asked().is_empty());
+    assert_eq!(lines[23], " ↑↓ select   enter test   q quit");
+}
+
+#[test]
+fn other_ports_alone_are_listed_instead_of_the_empty_message() {
+    let mut app = App::new();
+    app.on_event(boards_event(&[s3_otg("COM14")]));
+    let text = screen_text(&app);
+    assert!(!text.contains(NO_BOARDS_MESSAGE), "{text}");
+    assert!(text.contains(" Other ports (not tested)"), "{text}");
+    assert!(
+        text.contains(" 0 boards · 0 ports · 0 not identified · 1 other"),
+        "{text}"
+    );
+    // Enter has nothing to test or identify.
+    assert_eq!(app.on_key(press(KeyCode::Enter)), Action::None);
+    assert_eq!(app.screen, Screen::List);
+}
+
 #[test]
 fn confirm_screen_snapshot() {
     let mut app = App::new();

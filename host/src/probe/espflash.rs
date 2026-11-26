@@ -216,20 +216,26 @@ impl Probe for EspflashProbe {
     }
 
     fn identity(&mut self) -> Result<ChipIdentity, ProbeError> {
-        self.run(|conn, _| {
-            // Same order as espflash's detect_chip: GET_SECURITY_INFO, then the magic register
-            // when the ROM has no such command (ESP32) or gives no chip id.
-            if let Ok(info) = conn.security_info(USE_STUB)
-                && let Some(id) = info.chip_id
-            {
-                return Ok(ChipIdentity::SecurityChipId(id));
+        // The capability table says how this family identifies itself (ADR-004). Asking the
+        // ESP32 ROM for GET_SECURITY_INFO, which it does not have, costs a full 3 s timeout.
+        let expected = self.chip().ok().map(|chip| chip.caps().identity.value);
+        match identity_read(expected) {
+            IdentityRead::MagicReg(addr) => {
+                let value = self.read_reg(addr)?;
+                Ok(ChipIdentity::MagicReg { addr, value })
             }
-            let value = conn.read_reg(CHIP_DETECT_MAGIC_REG_ADDR)?;
-            Ok(ChipIdentity::MagicReg {
-                addr: CHIP_DETECT_MAGIC_REG_ADDR,
-                value,
-            })
-        })
+            IdentityRead::SecurityInfo => self.run(|conn, _| {
+                if let Some(id) = conn.security_info(USE_STUB)?.chip_id {
+                    return Ok(ChipIdentity::SecurityChipId(id));
+                }
+                // An older ROM answers without a chip id: fall back like espflash's detect_chip.
+                let value = conn.read_reg(CHIP_DETECT_MAGIC_REG_ADDR)?;
+                Ok(ChipIdentity::MagicReg {
+                    addr: CHIP_DETECT_MAGIC_REG_ADDR,
+                    value,
+                })
+            }),
+        }
     }
 
     fn revision(&mut self) -> Result<Revision, ProbeError> {
@@ -286,6 +292,24 @@ impl Probe for EspflashProbe {
                 port_listed(&session.port_name),
             )),
         }
+    }
+}
+
+/// Which ROM command answers [`Probe::identity`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IdentityRead {
+    /// `READ_REG` of this address only.
+    MagicReg(u32),
+    /// `GET_SECURITY_INFO` (magic register only if the reply has no chip id).
+    SecurityInfo,
+}
+
+/// Picks the read from the table's identity of the detected chip (ADR-004: data, not a `match`
+/// per chip). A chip outside the table (`None`) gets `GET_SECURITY_INFO` first, like espflash.
+fn identity_read(expected: Option<ChipIdentity>) -> IdentityRead {
+    match expected {
+        Some(ChipIdentity::MagicReg { addr, .. }) => IdentityRead::MagicReg(addr),
+        Some(ChipIdentity::SecurityChipId(_)) | None => IdentityRead::SecurityInfo,
     }
 }
 
@@ -980,6 +1004,31 @@ mod tests {
         std::panic::set_hook(hook);
         assert!(caught.is_err());
         assert!(!in_shield(), "the depth is restored after a caught panic");
+    }
+
+    #[test]
+    fn identity_read_follows_the_capability_table() {
+        for caps in &CHIPS {
+            let read = identity_read(Some(caps.identity.value));
+            match caps.identity.value {
+                ChipIdentity::MagicReg { addr, .. } => {
+                    assert_eq!(read, IdentityRead::MagicReg(addr), "{}", caps.target)
+                }
+                ChipIdentity::SecurityChipId(_) => {
+                    assert_eq!(read, IdentityRead::SecurityInfo, "{}", caps.target)
+                }
+            }
+        }
+        // The original ESP32 goes straight to its magic register (no 3 s GET_SECURITY_INFO
+        // timeout); the C3 asks for the security info.
+        let esp32 = Chip::from_target("esp32").unwrap().caps().identity.value;
+        assert_eq!(
+            identity_read(Some(esp32)),
+            IdentityRead::MagicReg(CHIP_DETECT_MAGIC_REG_ADDR)
+        );
+        let c3 = Chip::from_target("esp32c3").unwrap().caps().identity.value;
+        assert_eq!(identity_read(Some(c3)), IdentityRead::SecurityInfo);
+        assert_eq!(identity_read(None), IdentityRead::SecurityInfo);
     }
 
     #[test]

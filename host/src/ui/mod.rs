@@ -8,7 +8,9 @@
 //! in runs). [`App::on_key`] and [`App::on_event`] only change that state; what must happen
 //! outside comes back as an [`Action`] for the loop to carry out. Screens:
 //! `List` → `ConfirmIdentify` → `Identifying` → `List` → `Running` → `Done` → `List`.
-//! - `List`: the boards found by enumeration, live (hot-plug never opens a port, ADR-008 §3).
+//! - `List`: the boards found by enumeration, live (hot-plug never opens a port, ADR-008 §3),
+//!   then the bridges not identified yet and the "other" ports that are never tested (unknown
+//!   devices, JTAG channels, an app's own USB on the OTG controller), each with its reason.
 //!   `enter` tests the selected board (the only one needs no picking); if there are bridges
 //!   nobody was asked about yet, it asks first (ADR-008 §4). `i` asks again for every bridge
 //!   that is still not identified.
@@ -609,7 +611,8 @@ fn port_label(port: &PortDesc) -> (&'static str, &'static str) {
 fn draw_list(frame: &mut Frame, app: &App, area: Rect) {
     let boards = app.boards();
     let waiting = app.not_identified();
-    if boards.is_empty() && waiting.is_empty() {
+    let others = &app.grouping.others;
+    if boards.is_empty() && waiting.is_empty() && others.is_empty() {
         let [_, middle, _] = Layout::vertical([
             Constraint::Fill(1),
             Constraint::Length(1),
@@ -627,6 +630,7 @@ fn draw_list(frame: &mut Frame, app: &App, area: Rect) {
         .iter()
         .flat_map(Board::ports)
         .chain(waiting.iter().map(|(port, _)| *port))
+        .chain(others)
         .map(|port| safe(&port.name).as_str().len());
     let name_width = names.fold(PORT_COLUMN, usize::max);
     let selected = app.selected_index(&boards);
@@ -715,18 +719,48 @@ fn draw_list(frame: &mut Frame, app: &App, area: Rect) {
         }
     }
 
+    if !others.is_empty() {
+        if !lines.is_empty() {
+            lines.push(Line::raw(""));
+        }
+        lines.push(Line::styled(" Other ports (not tested)", bold()));
+        for port in others {
+            // Never opened: the class alone says why (host text, no board involved).
+            let class = transport::classify(port);
+            let ids = port
+                .usb
+                .as_ref()
+                .map(|usb| format!("{:04X}:{:04X}", usb.vid, usb.pid))
+                .unwrap_or_default();
+            let reason = class.not_tested_reason().unwrap_or_default();
+            lines.push(Line::from(vec![
+                Span::raw("   "),
+                Span::styled("·", gray()),
+                Span::raw(format!(
+                    " {:<name_width$} {ids:<MODEL_COLUMN$} ",
+                    safe(&port.name).as_str()
+                )),
+                Span::styled(reason, gray()),
+            ]));
+        }
+    }
+
     let ports: usize = boards
         .iter()
         .map(|board| 1 + board.others().len())
         .sum::<usize>()
         + waiting.len();
-    lines.push(Line::raw(""));
-    lines.push(Line::raw(format!(
+    let mut summary = format!(
         " {} · {} · {} not identified",
         plural(boards.len(), "board", "boards"),
         plural(ports, "port", "ports"),
         waiting.len()
-    )));
+    );
+    if !others.is_empty() {
+        summary.push_str(&format!(" · {} other", others.len()));
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::raw(summary));
     frame.render_widget(Paragraph::new(lines), area);
 }
 
