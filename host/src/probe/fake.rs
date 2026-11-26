@@ -172,6 +172,25 @@ impl FakeProbe {
         self
     }
 
+    /// Reports `identity` from [`Probe::identity`] instead of the recorded one (a board that
+    /// disagrees with the capability table).
+    pub fn with_identity(mut self, identity: ChipIdentity) -> FakeProbe {
+        self.identity = identity;
+        self
+    }
+
+    /// Reports `mhz` from [`Probe::crystal_mhz`] instead of the recorded crystal.
+    pub fn with_crystal_mhz(mut self, mhz: u32) -> FakeProbe {
+        self.crystal_mhz = mhz;
+        self
+    }
+
+    /// Reports `id` from [`Probe::flash_id`] instead of the recorded JEDEC ID (e.g. a blank bus).
+    pub fn with_flash_id(mut self, id: FlashId) -> FakeProbe {
+        self.flash_id = id;
+        self
+    }
+
     /// Every step called so far, in order (failed calls included).
     pub fn calls(&self) -> &[Step] {
         &self.calls
