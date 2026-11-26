@@ -1,0 +1,93 @@
+name: "Board bring-up / support report"
+description: Bring up a new board on the bench, or report how devkit-tester behaves on your board.
+title: "board: bring-up "
+labels: ["board"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The COM port number may go here, but never into a versioned file: it changes from PC to PC.
+        You may mask the last three bytes of the MAC (`40:4c:ca:xx:xx:xx`).
+
+  - type: dropdown
+    id: chip
+    attributes:
+      label: Chip
+      options:
+        - ESP32
+        - ESP32-C3
+        - ESP32-C5
+        - ESP32-C6
+        - ESP32-S3
+        - ESP32-P4
+        - ESP32-H2
+        - Other (write it in the board model)
+    validations:
+      required: true
+
+  - type: input
+    id: board
+    attributes:
+      label: Exact board model
+      description: As printed on the board or in the listing, with the seller if it is a clone.
+      placeholder: ESP32-C6-DevKitC-1 v1.2 / generic ESP32-S3 dual USB-C N16R8
+    validations:
+      required: true
+
+  - type: textarea
+    id: ports
+    attributes:
+      label: USB connectors and ports
+      description: One line per USB connector (Device Manager → Ports, or `Get-PnpDevice -Class Ports`).
+      value: |
+        - Connector 1: USB-Serial/JTAG native / bridge chip:  — VID:PID:
+        - Connector 2:
+      render: markdown
+    validations:
+      required: true
+
+  - type: input
+    id: esptool-version
+    attributes:
+      label: esptool version
+      placeholder: esptool v5.1.0
+    validations:
+      required: true
+
+  - type: textarea
+    id: chip-id
+    attributes:
+      label: esptool chip_id output (reference)
+      description: The exact command you ran and its full output.
+      render: text
+    validations:
+      required: true
+
+  - type: input
+    id: declared
+    attributes:
+      label: Flash / PSRAM declared by the seller
+      placeholder: 8 MB flash, no PSRAM / N16R8
+
+  - type: textarea
+    id: devkit-output
+    attributes:
+      label: devkit-tester output
+      description: "`devkit-tester --no-tui` output and version or commit, if you ran it."
+      render: text
+
+  - type: checkboxes
+    id: results
+    attributes:
+      label: Results
+      options:
+        - label: Chip and revision from devkit-tester match `esptool chip_id`
+        - label: Both ports of a dual-port board show up as one board
+        - label: Row in `docs/context/hardware.md` filled, with datasheet/TRM sources
+        - label: Probe fixture captured in `host/tests/fixtures/`
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes / traps found
+      description: Reset quirks, drivers, anything that differs from the datasheet.

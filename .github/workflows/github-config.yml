@@ -1,0 +1,32 @@
+# GitHub silently hides invalid issue forms, so validate them (and the workflows) here.
+# Path-filtered: do not make this a required check, or PRs that don't touch .github/ stay pending.
+name: github-config
+
+on:
+  pull_request:
+    paths: [".github/**"]
+  push:
+    branches: [main]
+    paths: [".github/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install check-jsonschema==0.38.2
+
+      - name: Validate issue forms, issue config and workflows
+        run: |
+          check-jsonschema --builtin-schema vendor.github-issue-forms .github/ISSUE_TEMPLATE/[0-9]*.yml
+          check-jsonschema --builtin-schema vendor.github-issue-config .github/ISSUE_TEMPLATE/config.yml
+          check-jsonschema --builtin-schema vendor.github-workflows .github/workflows/*.yml

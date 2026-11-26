@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Project docs (PRDs, ADRs, roadmap, boards)
+    url: https://github.com/RenatoFaraco/esp32-devkit-tester/tree/main/docs
+    about: Check scope, decisions and planned milestones before opening an issue.

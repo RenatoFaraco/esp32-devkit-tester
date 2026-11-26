@@ -1,0 +1,84 @@
+name: Bug report
+description: devkit-tester, the firmware or the CI does not behave as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! If the problem is "my board shows FAIL", check first whether the board
+        itself is faulty: the report may be right. A wrong PASS/FAIL/SKIP is a bug.
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Host (devkit-tester)
+        - Firmware (on-target tests)
+        - CI / build
+        - Docs
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Plug in the board (which USB connector)
+        2. Run `devkit-tester` and press a key
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: devkit-tester version or commit
+      placeholder: v0.1.0 / a1b2c3d
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      value: |
+        - OS and terminal (e.g. Windows 11 + PowerShell in Windows Terminal):
+        - Chip and board model:
+        - Port(s) and VID:PID (e.g. native 303A:1001, CP210x 10C4:EA60):
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: "`devkit-tester --no-tui` output, or the error / panic message."
+      render: text
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: The output above contains nothing I want to keep private.
+          required: true
