@@ -12,7 +12,8 @@ Cada marco termina com: CI verde, tag, `CHANGELOG.md` atualizado e este arquivo 
 - [ ] Templates de issue e PR (`.github/`), incluindo "board bring-up"
 - [ ] `host/`: workspace Cargo, crate `esp32-devkit-tester`, binário `devkit-tester` que abre
       a tela "Press any key" e sai com `q`
-- [ ] `firmware/`: projeto ESP-IDF "hello" que compila para os 6 alvos da bancada; versão do
+- [ ] `firmware/`: projeto ESP-IDF "hello" que compila para os 4 alvos da bancada (ESP32, C3, C6, S3;
+      C5 e P4 entram no bring-up do M1 quando as placas chegarem); versão do
       IDF fixada; ADR-001 aceita ou revista
 - [ ] Módulo `platform` no host (vazio na fase 1, ponto de extensão para WSL/Linux/macOS, ADR-007)
 - [ ] CI: fmt + clippy + test do host (Windows e Linux, ADR-007); build do firmware na matriz de alvos

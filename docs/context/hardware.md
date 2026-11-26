@@ -10,11 +10,11 @@
 |------|----------------------|--------|--------------------|-----------------|-----------------|---------------|---------|--------------|
 | ESP32 | a preencher | Xtensa LX6 ×2 | Wi-Fi 4, BT clássico + BLE | não (JTAG só com sonda externa, GPIO12–15) | a preencher | a preencher | — | — |
 | ESP32-C3 | a preencher | RISC-V ×1 | Wi-Fi 4, BLE 5 | sim | a preencher | a preencher | — | — |
-| ESP32-C5 | a preencher | RISC-V ×1 | Wi-Fi 6 2,4/5 GHz, BLE 5, 802.15.4 | sim | a preencher | a preencher | — | — |
+| ESP32-C5 | a caminho | RISC-V ×1 | Wi-Fi 6 2,4/5 GHz, BLE 5, 802.15.4 | sim | a preencher | a preencher | — | — |
 | ESP32-C6 | a preencher | RISC-V HP + LP | Wi-Fi 6 2,4 GHz, BLE 5, 802.15.4 | sim | a preencher | a preencher | — | — |
 | ESP32-S3 | a preencher | Xtensa LX7 ×2 | Wi-Fi 4, BLE 5 | sim (+ USB OTG) | a preencher | a preencher | — | — |
-| ESP32-P4 | a preencher | RISC-V ×2 (HP) | nenhum no chip (DevKits usam um coprocessador de rádio) | sim (+ USB OTG HS) | a preencher | a preencher | — | — |
-| ESP32-H2 | a caminho | RISC-V ×1 | BLE 5, 802.15.4 (sem Wi-Fi) | sim | a preencher | a preencher | — | — |
+| ESP32-P4 | a caminho | RISC-V ×2 (HP) | nenhum no chip (DevKits usam um coprocessador de rádio) | sim (+ USB OTG HS) | a preencher | a preencher | — | — |
+| ESP32-H2 | não comprada | RISC-V ×1 | BLE 5, 802.15.4 (sem Wi-Fi) | sim | a preencher | a preencher | — | — |
 
 Tudo nas colunas "datasheet" deve ser confirmado contra o datasheet/TRM de cada chip ao
 preencher a linha (citar a fonte na issue de bring-up).
