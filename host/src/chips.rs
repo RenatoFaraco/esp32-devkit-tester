@@ -289,6 +289,12 @@ impl fmt::Display for ChipIdentity {
     }
 }
 
+/// A frequency in the notation of [`FieldView::value`] (`"40 MHz"`), so a value read from the
+/// board compares equal to the table text.
+pub fn mhz_text(mhz: u32) -> String {
+    format!("{mhz} MHz")
+}
+
 /// Textual view of one capability, for the Board panel and for findings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldView {
@@ -381,12 +387,12 @@ impl ChipCaps {
             view(
                 "max_clock_mhz",
                 max_clock_mhz,
-                format!("{} MHz", max_clock_mhz.value),
+                mhz_text(u32::from(max_clock_mhz.value)),
             ),
             view(
                 "crystal_mhz",
                 crystal_mhz,
-                format!("{} MHz", crystal_mhz.value),
+                mhz_text(u32::from(crystal_mhz.value)),
             ),
             view("radios", radios, radios.value.to_string()),
             view(
