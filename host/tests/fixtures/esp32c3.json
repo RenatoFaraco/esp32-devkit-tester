@@ -49,5 +49,9 @@
     "efuse_capacity": "4M",
     "efuse_temp_grade": "105C"
   },
-  "registers": []
+  "identity": { "security_chip_id": 5 },
+  "registers": [
+    { "addr": "0x60008844", "value": "0xE00A5D70", "source": "espefuse dump (same eFuse read registers)" },
+    { "addr": "0x60008848", "value": "0x00008053", "source": "espefuse dump (same eFuse read registers)" }
+  ]
 }

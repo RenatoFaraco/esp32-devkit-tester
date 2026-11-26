@@ -25,6 +25,11 @@ anyhow = "1.0.105"
 ratatui = "0.30"
 serialport = { version = "4.10", features = ["usbportinfo-interface"] }
 
+[dev-dependencies]
+# Only to read test fixtures (FakeProbe); promoted to [dependencies] by the JSON report (#24).
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
 [lints.rust]
 unsafe_code = "forbid"
 missing_docs = "warn"

@@ -266,9 +266,163 @@ fn port_desc(info: serialport::SerialPortInfo) -> PortDesc {
     }
 }
 
+/// Factory base MAC of a chip: the identity of a board (ADR-008 §1).
+///
+/// Lives in `transport` because three layers need it: `transport` (serial number of the native
+/// port), `probe` (read from the ROM) and `runner` (grouping ports into boards).
+///
+/// [`Display`](fmt::Display) is the canonical form of `report-json.md` §5.2: six lowercase hex
+/// octets separated by `:` (`e8:f6:0a:f7:ff:d4`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Mac(pub [u8; 6]);
+
+/// A text that is not a MAC address.
+///
+/// Carries no copy of the input: the text comes from the board or a USB descriptor and must not
+/// reach a terminal through an error message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MacParseError;
+
+impl fmt::Display for MacParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("not a MAC address (expected 6 hex octets)")
+    }
+}
+
+impl std::error::Error for MacParseError {}
+
+impl Mac {
+    /// Parses a MAC from text, ignoring ASCII case and surrounding whitespace.
+    ///
+    /// Accepts six octets separated by one consistent separator, `:` or `-`
+    /// (`E8:F6:0A:F7:FF:D4`, `e8-f6-0a-f7-ff-d4`), or twelve hex digits without separator
+    /// (`e8f60af7ffd4`). Anything else is an error, never a panic: the text is untrusted.
+    pub fn parse(text: &str) -> Result<Mac, MacParseError> {
+        let bytes = text.trim().as_bytes();
+        let (stride, separator) = match bytes.len() {
+            12 => (2, None),
+            17 => match bytes.get(2) {
+                Some(&sep @ (b':' | b'-')) => (3, Some(sep)),
+                _ => return Err(MacParseError),
+            },
+            _ => return Err(MacParseError),
+        };
+        let mut octets = [0u8; 6];
+        for (i, octet) in octets.iter_mut().enumerate() {
+            let start = i * stride;
+            let (Some(&high), Some(&low)) = (bytes.get(start), bytes.get(start + 1)) else {
+                return Err(MacParseError);
+            };
+            *octet = (hex_nibble(high).ok_or(MacParseError)? << 4)
+                | hex_nibble(low).ok_or(MacParseError)?;
+            if let Some(sep) = separator
+                && i < 5
+                && bytes.get(start + 2) != Some(&sep)
+            {
+                return Err(MacParseError);
+            }
+        }
+        Ok(Mac(octets))
+    }
+
+    /// MAC from the two eFuse words at `mac_efuse_reg` (`lo`) and `mac_efuse_reg + 4` (`hi`),
+    /// packed like esptool: `hi` then `lo` big-endian (8 bytes), dropping the first two bytes
+    /// (unused bits, or the CRC on the original ESP32).
+    pub fn from_efuse_words(lo: u32, hi: u32) -> Mac {
+        let [_, _, h2, h3] = hi.to_be_bytes();
+        let [l0, l1, l2, l3] = lo.to_be_bytes();
+        Mac([h2, h3, l0, l1, l2, l3])
+    }
+
+    /// The six octets, most significant first.
+    pub fn octets(&self) -> [u8; 6] {
+        self.0
+    }
+}
+
+fn hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+impl std::str::FromStr for Mac {
+    type Err = MacParseError;
+
+    fn from_str(text: &str) -> Result<Mac, MacParseError> {
+        Mac::parse(text)
+    }
+}
+
+impl fmt::Display for Mac {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let [a, b, c, d, e, g] = self.0;
+        write!(f, "{a:02x}:{b:02x}:{c:02x}:{d:02x}:{e:02x}:{g:02x}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mac_parses_os_serial_and_prints_canonical() {
+        let expected = Mac([0xE8, 0xF6, 0x0A, 0xF7, 0xFF, 0xD4]);
+        for text in [
+            "E8:F6:0A:F7:FF:D4",
+            "e8:f6:0a:f7:ff:d4",
+            "e8-F6-0a-f7-FF-d4",
+            "e8f60af7ffd4",
+            "E8F60AF7FFD4",
+            "  E8:F6:0A:F7:FF:D4\r\n",
+        ] {
+            assert_eq!(Mac::parse(text), Ok(expected), "{text:?}");
+            assert_eq!(text.parse::<Mac>(), Ok(expected), "{text:?}");
+        }
+        assert_eq!(expected.to_string(), "e8:f6:0a:f7:ff:d4");
+        assert_eq!(Mac::parse(&expected.to_string()), Ok(expected));
+    }
+
+    #[test]
+    fn mac_rejects_garbage() {
+        for text in [
+            "",
+            "5",
+            "5B53026573",
+            "e8:f6:0a:f7:ff",
+            "e8:f6:0a:f7:ff:d4:00",
+            "e8:f6-0a:f7:ff:d4",
+            "e8.f6.0a.f7.ff.d4",
+            "e8:f6:0a:f7:ff:dg",
+            "+8:f6:0a:f7:ff:d4",
+            "e8f60af7ffd",
+            "e8f60af7ffd4a",
+            "\u{1b}[2Je8f60af7ff",
+            // 12 bytes but not 12 ASCII chars: multi-byte UTF-8 must not split a char.
+            "éééééé",
+            "e8:f6:0a:f7:ff:dé",
+        ] {
+            assert_eq!(Mac::parse(text), Err(MacParseError), "{text:?}");
+        }
+        assert!(!MacParseError.to_string().contains('\u{1b}'));
+    }
+
+    #[test]
+    fn mac_from_efuse_words_matches_fixture() {
+        // (lo, hi, MAC reported by esptool) from host/tests/fixtures/*.json.
+        let cases = [
+            (0x0af7_ffd4, 0xfffe_e8f6, "e8:f6:0a:f7:ff:d4"),
+            (0xabd2_25b4, 0x004c_1cc3, "1c:c3:ab:d2:25:b4"),
+            (0xe00a_5d70, 0x0000_8053, "80:53:e0:0a:5d:70"),
+            (0xdb84_140c, 0x0000_1051, "10:51:db:84:14:0c"),
+        ];
+        for (lo, hi, mac) in cases {
+            assert_eq!(Mac::from_efuse_words(lo, hi).to_string(), mac);
+        }
+    }
 
     fn usb_port(name: &str, vid: u16, pid: u16, interface: Option<u8>) -> PortDesc {
         PortDesc {
