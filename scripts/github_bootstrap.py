@@ -469,6 +469,7 @@ ISSUES = [
             ],
             [
                 "Test `groups_native_and_bridge_ports_of_one_board` with fake probe results",
+                "Every group has exactly one `primary` port (the bridge when present, else the native one; ADR-008 §5), so the report's `BoardInfo` is built valid; test `each_group_has_exactly_one_primary_port`",
                 "C6/S3 board shows as one board, one test per port (criterion 2)",
             ],
             "PRD v0.1 H2, §7 criterion 2 · ADR-008",
