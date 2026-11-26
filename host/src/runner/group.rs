@@ -6,7 +6,8 @@
 //!
 //! 1. [`pre_group`] (pure, nothing opened): a native port whose USB serial number is a MAC is a
 //!    group with that MAC. A bridge, or a native port with an unreadable serial, is
-//!    `unidentified`. Unknown, non-USB and JTAG-channel ports are `others`: listed, never opened.
+//!    `unidentified`. Unknown, non-USB, JTAG-channel and app-firmware Espressif USB (OTG) ports
+//!    are `others`: listed, never opened.
 //! 2. [`identify`] (only after a user action): each unidentified port is opened once, one at a
 //!    time: connect, MAC, chip, hard reset. A failure is a value with a reason, never a panic.
 //! 3. [`merge`] (pure): an identified port joins the group with the same MAC, or becomes a board
@@ -16,20 +17,22 @@
 //!    reset makes the native port vanish and come back (`hardware.md`), so it is looked for again
 //!    by USB serial number, never by name, for at most [`REENUMERATE_TIMEOUT`].
 //!
-//! Sequential and blocking on purpose: it runs on the runner's thread (the threaded runner with
-//! events is #20). Every source of I/O is injected (probe factory, enumeration, clock, sleeper),
-//! so the whole flow is tested without a board and without sleeping.
+//! Sequential and blocking on purpose: it runs on the runner's thread ([`super::worker`]), which
+//! forwards the [`Progress`] reported by [`run_board`] to the UI. Every source of I/O is injected
+//! (probe factory, enumeration, clock, sleeper), so the whole flow is tested without a board and
+//! without sleeping.
 
 use std::time::Duration;
 
 use super::{
-    BOARD_TESTS, Clock, PortSync, Sleeper, SyncError, UART_BRIDGE, USB_SERIAL_JTAG, catalog,
-    port_tests, run_suites, sync_port,
+    BOARD_TESTS, Clock, PortSync, Progress, Sleeper, SyncError, UART_BRIDGE, USB_SERIAL_JTAG,
+    catalog, port_tests, run_suites, sync_port,
 };
 use crate::chips::{Chip, ChipCaps};
 use crate::probe::{Probe, ProbeError};
 use crate::report::{
-    BoardInfo, ChipInfo, HardReset, Outcome, PortInfo, PortKind, Report, Run, SafeText, TestResult,
+    BoardInfo, ChipInfo, HardReset, Outcome, PortInfo, PortKind, Report, Run, SafeText, TestId,
+    TestResult,
 };
 use crate::transport::{Mac, PortClass, PortDesc, classify, trusted_serial};
 
@@ -44,6 +47,14 @@ pub const POLL_INTERVAL: Duration = Duration::from_millis(200);
 /// as it is: the reset did not drop it, or it dropped and came back between two polls.
 pub const VANISH_GRACE: Duration = Duration::from_secs(1);
 
+/// How many sessions [`identify`] opens on a bridge whose connect times out.
+///
+/// Bench, 2026-11-26: an ESP32 DevKit V1 (CH9102) only syncs after several of espflash's reset
+/// attempts (~3 s), and the TUI once got "identification failed: timeout" from it. A marginal
+/// auto-reset circuit (EN/IO0 RC timing) or a board plugged in a moment ago and still booting
+/// can use up every attempt of one connect; a fresh session usually syncs.
+pub const IDENTIFY_ATTEMPTS: u32 = 2;
+
 /// What the enumeration alone says, before any port is opened.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Grouping {
@@ -51,7 +62,8 @@ pub struct Grouping {
     pub groups: Vec<PreGroup>,
     /// Bridges, and native ports whose serial number is not a MAC: need [`identify`].
     pub unidentified: Vec<PortDesc>,
-    /// Unknown VID:PID, non-USB, JTAG channel or ambiguous multi-channel ports: never opened.
+    /// Unknown VID:PID, non-USB, JTAG channel, ambiguous multi-channel and app-firmware
+    /// Espressif USB (OTG) ports: never opened.
     pub others: Vec<PortDesc>,
 }
 
@@ -132,6 +144,10 @@ impl Identified {
 /// Opens each port of `ports` once, in order, to read the MAC (ADR-008 §4): connect, MAC, chip,
 /// then a hard reset back to the application in every case.
 ///
+/// A connect that fails with [`ProbeError::Timeout`] gets one more session (see
+/// [`IDENTIFY_ATTEMPTS`]); a busy or vanished port does not (another program holds it, or it is
+/// gone: trying again at once would not change that).
+///
 /// Call it only after the user asked (each port suffers a reset). `probe` makes a fresh
 /// [`Probe`] for each port. A port that is not a probe candidate is never opened: it comes back
 /// as [`Identified::Failed`].
@@ -148,13 +164,23 @@ pub fn identify(
             });
             continue;
         }
-        let mut session = probe(port);
-        let mac = session.connect(port).and_then(|()| session.mac());
-        let chip = match mac {
-            Ok(_) => session.chip().ok(),
-            Err(_) => None,
+        let mut attempt = 0;
+        let (mac, chip, reset) = loop {
+            attempt += 1;
+            let mut session = probe(port);
+            let connected = session.connect(port);
+            let sync_timed_out = connected == Err(ProbeError::Timeout);
+            let mac = connected.and_then(|()| session.mac());
+            let chip = match mac {
+                Ok(_) => session.chip().ok(),
+                Err(_) => None,
+            };
+            let reset = reset_outcome(session.hard_reset());
+            drop(session);
+            if !sync_timed_out || attempt >= IDENTIFY_ATTEMPTS {
+                break (mac, chip, reset);
+            }
         };
-        let reset = reset_outcome(session.hard_reset());
         identified.push(match mac {
             Ok(mac) => Identified::Found {
                 port: port.clone(),
@@ -288,7 +314,10 @@ pub fn port_info(port: &PortDesc, primary: bool) -> Option<PortInfo> {
     let kind = match class {
         PortClass::Native => PortKind::Native,
         PortClass::Bridge { .. } => PortKind::Bridge,
-        PortClass::JtagInterface { .. } | PortClass::NotUsb | PortClass::Unknown { .. } => {
+        PortClass::JtagInterface { .. }
+        | PortClass::EspressifApp { .. }
+        | PortClass::NotUsb
+        | PortClass::Unknown { .. } => {
             return None;
         }
     };
@@ -316,33 +345,93 @@ pub fn port_info(port: &PortDesc, primary: bool) -> Option<PortInfo> {
 ///
 /// `probe` makes a fresh [`Probe`] per session; `enumerate` lists the ports (an OS error is an
 /// empty list); `clock` times the suites and the wait; `sleeper` pauses between polls.
+///
+/// `observer` hears the run as it happens: [`Progress::Started`] when a port test or a suite
+/// test begins, [`Progress::Waiting`] before waiting for a port to come back, and
+/// [`Progress::Finished`] once per test of the report. A test's outcome is announced as soon as
+/// it is final (the primary bridge right after its sync, the suite tests as they end); the rest
+/// (the other ports, tests closed by an abort or skipped) right before returning, in report
+/// order. The announced outcomes are the report's; the logic does not depend on the observer.
 pub fn run_board(
     probe: &mut dyn FnMut(&PortDesc) -> Box<dyn Probe>,
     board: &Board,
     clock: &dyn Clock,
     sleeper: &dyn Sleeper,
     enumerate: &mut dyn FnMut() -> Vec<PortDesc>,
+    observer: &mut dyn FnMut(Progress),
 ) -> Report {
     let mut syncs = Vec::with_capacity(1 + board.others().len());
+    let mut announced: Vec<TestId> = Vec::new();
+    let mut notify = |progress: Progress| {
+        if let Progress::Finished(test) = &progress {
+            announced.push(test.id);
+        }
+        observer(progress);
+    };
 
+    let primary_test = port_test_of(board.primary());
+    notify(Progress::Started(primary_test));
     let mut session = probe(board.primary());
     let (sync, primary_chip) = sync_session(session.as_mut(), board.primary(), true);
-    let suites = primary_chip.map(|chip| board_suites(session.as_mut(), chip.caps(), clock));
-    let mut reset = reset_outcome(session.hard_reset());
+    if primary_test == UART_BRIDGE {
+        // Final already: it depends only on this sync and the board MAC (see `port_tests`).
+        let caps = primary_chip.or(board.chip()).map(Chip::caps);
+        if let Some(test) = port_tests(caps, Some(board.mac()), std::slice::from_ref(&sync))
+            .into_iter()
+            .find(|test| test.id == UART_BRIDGE)
+        {
+            notify(Progress::Finished(test));
+        }
+    }
+    let suites =
+        primary_chip.map(|chip| board_suites(session.as_mut(), chip.caps(), clock, &mut notify));
+    let mut reset = after_session(HardReset::done(), session.hard_reset());
     drop(session);
     syncs.push(sync);
     let mut chip = primary_chip.or(board.chip());
 
     for port in board.others() {
         let current = match classify(port) {
-            PortClass::Native => await_port(port, enumerate, clock, sleeper),
+            PortClass::Native => {
+                notify(Progress::Started(USB_SERIAL_JTAG));
+                notify(Progress::Waiting { port: port.clone() });
+                await_port(port, enumerate, clock, sleeper)
+            }
             _ => Ok(port.clone()),
         };
         match current {
-            Ok(current) => {
-                let mut session = probe(&current);
-                let (sync, read) = sync_session(session.as_mut(), &current, chip.is_none());
-                reset = reset_outcome(session.hard_reset());
+            Ok(mut current) => {
+                // A port that just came back (or a hub that re-enumerated after another board was
+                // unplugged) may be listed before Windows lets it open: retry busy/gone opens,
+                // re-finding the port by serial number, within the same re-enumeration window.
+                let start = clock.now_ms();
+                let max_tries = millis(REENUMERATE_TIMEOUT) / millis(POLL_INTERVAL).max(1) + 1;
+                let mut tries = 0;
+                let (sync, read) = loop {
+                    tries += 1;
+                    let mut session = probe(&current);
+                    let (sync, read) = sync_session(session.as_mut(), &current, chip.is_none());
+                    reset = after_session(reset, session.hard_reset());
+                    drop(session);
+                    let transient = matches!(
+                        &sync.mac,
+                        Err(SyncError::Probe(
+                            ProbeError::Busy | ProbeError::Disconnected
+                        ))
+                    );
+                    let elapsed = clock.now_ms().saturating_sub(start);
+                    if !transient || tries >= max_tries || elapsed >= millis(REENUMERATE_TIMEOUT) {
+                        break (sync, read);
+                    }
+                    sleeper.sleep(POLL_INTERVAL);
+                    if let Some(found) = enumerate().into_iter().find(|candidate| {
+                        candidate.usb.is_some()
+                            && candidate.usb.as_ref().map(|u| (u.vid, u.pid, &u.serial))
+                                == current.usb.as_ref().map(|u| (u.vid, u.pid, &u.serial))
+                    }) {
+                        current = found;
+                    }
+                };
                 chip = chip.or(read);
                 syncs.push(sync);
             }
@@ -370,10 +459,7 @@ pub fn run_board(
         catalog(caps, board.has_bridge()),
     );
     let suite_tests = suites.unwrap_or_else(|| {
-        let cause = match classify(board.primary()) {
-            PortClass::Native => USB_SERIAL_JTAG,
-            _ => UART_BRIDGE,
-        };
+        let cause = primary_test;
         let reason = format!("not run: {cause} failed");
         BOARD_TESTS
             .iter()
@@ -390,7 +476,22 @@ pub fn run_board(
         let finished = run.finish(test.id, test.outcome);
         debug_assert!(finished.is_ok(), "runner bug: {finished:?}");
     }
-    run.complete(reset)
+    let report = run.complete(reset);
+    for test in report.tests() {
+        if !announced.contains(&test.id) {
+            observer(Progress::Finished(test.clone()));
+        }
+    }
+    report
+}
+
+/// The `port` test a port answers for: `port/usb-serial-jtag` on the native port,
+/// `port/uart-bridge` otherwise.
+fn port_test_of(port: &PortDesc) -> TestId {
+    match classify(port) {
+        PortClass::Native => USB_SERIAL_JTAG,
+        _ => UART_BRIDGE,
+    }
 }
 
 /// [`sync_port`], then (when `want_chip`) the chip read on the same session. A failed chip read
@@ -415,7 +516,12 @@ fn sync_session(
 
 /// The board suites on an open session, in a run of their own: an aborted session stops the
 /// suites (`not run`) but never the port tests of the other ports.
-fn board_suites(probe: &mut dyn Probe, caps: &ChipCaps, clock: &dyn Clock) -> Vec<TestResult> {
+fn board_suites(
+    probe: &mut dyn Probe,
+    caps: &ChipCaps,
+    clock: &dyn Clock,
+    observer: &mut dyn FnMut(Progress),
+) -> Vec<TestResult> {
     let board = BoardInfo {
         chip: None,
         mac: None,
@@ -423,8 +529,18 @@ fn board_suites(probe: &mut dyn Probe, caps: &ChipCaps, clock: &dyn Clock) -> Ve
     };
     let mut run = Run::new(env!("CARGO_PKG_VERSION"), board, BOARD_TESTS.to_vec());
     // An interruption is already recorded in `run` (abort); the caller does the hard reset.
-    let _interrupted = run_suites(probe, caps, clock, &mut run);
+    let _interrupted = run_suites(probe, caps, clock, &mut run, observer);
     run.complete(HardReset::done()).tests().to_vec()
+}
+
+/// The board's state after a session's hard reset. A session that never opened (the port was
+/// busy or gone, so the reset answers `NotConnected`) never touched the board: the state left by
+/// the previous reset stands, instead of claiming the board did not get back to its app.
+fn after_session(previous: HardReset, result: Result<(), ProbeError>) -> HardReset {
+    match result {
+        Err(ProbeError::NotConnected) => previous,
+        other => reset_outcome(other),
+    }
 }
 
 fn reset_outcome(result: Result<(), ProbeError>) -> HardReset {
@@ -828,11 +944,80 @@ mod tests {
                 reason: "identification failed: timeout".to_owned(),
             }]
         );
-        // The hard reset is attempted even though the session never opened.
-        assert_eq!(bench.steps_on("COM13"), [Step::Connect, Step::HardReset]);
+        // Two sessions (the timeout is retried once); the hard reset is attempted in each even
+        // though the session never opened.
+        assert_eq!(
+            bench.steps_on("COM13"),
+            [
+                Step::Connect,
+                Step::HardReset,
+                Step::Connect,
+                Step::HardReset
+            ]
+        );
         let boards = merge(&grouping, &identified);
         assert_eq!(boards.len(), 1);
         assert_eq!(names(boards[0].ports()), ["COM11"]);
+    }
+
+    /// Bench, 2026-11-26: the ESP32 DevKit V1 (CH9102) timed out once on identification. The
+    /// first session times out, the second syncs: the bridge is found.
+    #[test]
+    fn bridge_timeout_is_retried_once_with_a_new_session() {
+        let log: Log = Rc::default();
+        let mut sessions: VecDeque<FakeProbe> = VecDeque::from([
+            fake("esp32").fail_at(Step::Connect, ProbeError::Timeout),
+            fake("esp32"),
+        ]);
+        let mut factory = |port: &PortDesc| -> Box<dyn Probe> {
+            let inner = sessions.pop_front().expect("a third session was opened");
+            Box::new(Logged {
+                name: port.name.clone(),
+                inner,
+                log: Rc::clone(&log),
+            })
+        };
+        let identified = identify(&mut factory, &[ch9102("COM9")]);
+        assert_eq!(
+            identified,
+            [Identified::Found {
+                port: ch9102("COM9"),
+                mac: mac(ESP32_MAC),
+                chip: Some(chip("esp32")),
+                reset: HardReset::done(),
+            }]
+        );
+        let steps: Vec<Step> = log.borrow().iter().map(|(_, step)| *step).collect();
+        assert_eq!(
+            steps,
+            [
+                Step::Connect,
+                Step::HardReset,
+                Step::Connect,
+                Step::Mac,
+                Step::Chip,
+                Step::HardReset
+            ]
+        );
+    }
+
+    /// Only a sync timeout is retried: a busy or vanished port fails at once, in one session.
+    #[test]
+    fn busy_or_gone_bridge_is_not_retried() {
+        for error in [ProbeError::Busy, ProbeError::Disconnected] {
+            let bench =
+                Bench::new(&[("COM9", fake("esp32").fail_at(Step::Connect, error.clone()))]);
+            let identified = identify(&mut bench.factory(), &[ch9102("COM9")]);
+            assert!(
+                matches!(&identified[..], [Identified::Failed { .. }]),
+                "{error:?}"
+            );
+            assert_eq!(
+                bench.steps_on("COM9"),
+                [Step::Connect, Step::HardReset],
+                "{error:?}"
+            );
+        }
     }
 
     #[test]
@@ -845,6 +1030,8 @@ mod tests {
             },
             usb("COM20", 0x0403, 0x6010, None, Some(0)),
             usb("COM21", 0x0403, 0x6010, None, None),
+            // S3 app on the OTG controller (TinyUSB): its serial "123456" is not a MAC.
+            usb("COM14", 0x303A, 0x4001, Some("123456"), Some(0)),
         ];
         let grouping = pre_group(&ports);
         assert!(grouping.groups.is_empty());
@@ -913,7 +1100,14 @@ mod tests {
         ]);
         let bench = Bench::new(&[("COM13", fake("esp32c6")), ("COM12", fake("esp32c6"))]);
         let time = FakeTime::default();
-        let report = run_board(&mut bench.factory(), &board, &time, &time, &mut enumerate);
+        let report = run_board(
+            &mut bench.factory(),
+            &board,
+            &time,
+            &time,
+            &mut enumerate,
+            &mut |_| {},
+        );
 
         assert_eq!(
             report.summary().to_string(),
@@ -977,7 +1171,14 @@ mod tests {
         let mut enumerate = script(vec![vec![ch343("COM13")]]);
         let bench = Bench::new(&[("COM13", fake("esp32c6"))]);
         let time = FakeTime::default();
-        let report = run_board(&mut bench.factory(), &board, &time, &time, &mut enumerate);
+        let report = run_board(
+            &mut bench.factory(),
+            &board,
+            &time,
+            &time,
+            &mut enumerate,
+            &mut |_| {},
+        );
 
         let native = outcome(&report, USB_SERIAL_JTAG);
         assert_eq!(native.state(), State::Fail);
@@ -998,6 +1199,78 @@ mod tests {
         assert_eq!(time.sleeps.get(), 25);
     }
 
+    /// Bench, 2026-11-26: unplugging another board from the same hub made the C6 native port
+    /// listed-but-not-openable for a moment; one try failed in 5 ms. It is retried by serial.
+    #[test]
+    fn native_port_busy_for_a_moment_is_retried_and_passes() {
+        let board = c6_board();
+        let mut enumerate = script(vec![
+            vec![ch343("COM13")],
+            vec![ch343("COM13"), native("COM11", "E8:F6:0A:F7:FF:D4")],
+            vec![ch343("COM13"), native("COM12", "E8:F6:0A:F7:FF:D4")],
+        ]);
+        let bench = Bench::new(&[
+            ("COM13", fake("esp32c6")),
+            (
+                "COM11",
+                fake("esp32c6").fail_at(Step::Connect, ProbeError::Busy),
+            ),
+            ("COM12", fake("esp32c6")),
+        ]);
+        let time = FakeTime::default();
+        let report = run_board(
+            &mut bench.factory(),
+            &board,
+            &time,
+            &time,
+            &mut enumerate,
+            &mut |_| {},
+        );
+
+        assert_eq!(outcome(&report, USB_SERIAL_JTAG).state(), State::Pass);
+        assert_eq!(report.summary().failed, 0);
+        assert!(report.hard_reset().is_done());
+    }
+
+    /// A port that stays busy (a serial monitor has it open) fails with a reason that says so,
+    /// and the board is still reported back to its app: that port never opened a session.
+    #[test]
+    fn native_port_kept_busy_fails_with_reason_and_board_is_still_back() {
+        let board = c6_board();
+        let mut enumerate = script(vec![
+            vec![ch343("COM13")],
+            vec![ch343("COM13"), native("COM11", "E8:F6:0A:F7:FF:D4")],
+        ]);
+        let bench = Bench::new(&[
+            ("COM13", fake("esp32c6")),
+            (
+                "COM11",
+                fake("esp32c6").fail_at(Step::Connect, ProbeError::Busy),
+            ),
+        ]);
+        let time = FakeTime::default();
+        let report = run_board(
+            &mut bench.factory(),
+            &board,
+            &time,
+            &time,
+            &mut enumerate,
+            &mut |_| {},
+        );
+
+        let native = outcome(&report, USB_SERIAL_JTAG);
+        assert_eq!(native.state(), State::Fail);
+        let reason = native.reason().map(SafeText::as_str).unwrap_or_default();
+        assert!(reason.contains("port busy"), "{reason}");
+        assert!(
+            report.hard_reset().is_done(),
+            "{:?}",
+            report.hard_reset().reason()
+        );
+        // Bounded: retried within the re-enumeration window, never forever.
+        assert!(time.now.get() <= 5_000 + 1_000 + 200);
+    }
+
     #[test]
     fn primary_sync_failure_skips_suites_and_still_tries_the_native_port() {
         let board = c6_board();
@@ -1013,7 +1286,14 @@ mod tests {
             ("COM11", fake("esp32c6")),
         ]);
         let time = FakeTime::default();
-        let report = run_board(&mut bench.factory(), &board, &time, &time, &mut enumerate);
+        let report = run_board(
+            &mut bench.factory(),
+            &board,
+            &time,
+            &time,
+            &mut enumerate,
+            &mut |_| {},
+        );
 
         let bridge = outcome(&report, UART_BRIDGE);
         assert_eq!(bridge.state(), State::Fail);
@@ -1051,7 +1331,14 @@ mod tests {
         )]);
         let time = FakeTime::default();
         let mut enumerate = script(vec![vec![]]);
-        let report = run_board(&mut bench.factory(), &board, &time, &time, &mut enumerate);
+        let report = run_board(
+            &mut bench.factory(),
+            &board,
+            &time,
+            &time,
+            &mut enumerate,
+            &mut |_| {},
+        );
         assert_eq!(report.board().chip, None);
         assert_eq!(report.tests().len(), 11);
         assert_eq!(

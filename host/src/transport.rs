@@ -98,10 +98,14 @@ pub struct UsbEntry {
     pub serial_trustworthy: bool,
 }
 
+/// Espressif's USB Vendor ID. Every Espressif PID other than the USB-Serial/JTAG row of
+/// [`KNOWN_USB`] is the application's own USB stack ([`PortClass::EspressifApp`]).
+pub const ESPRESSIF_VID: u16 = 0x303A;
+
 /// Known USB devices; must list every VID:PID of `docs/context/hardware.md` (checked by test).
 pub const KNOWN_USB: &[UsbEntry] = &[
     UsbEntry {
-        vid: 0x303A,
+        vid: ESPRESSIF_VID,
         pid: 0x1001,
         kind: PortKind::Native,
         bridge_model: None,
@@ -175,6 +179,14 @@ pub enum PortClass {
         /// Model name from [`KNOWN_USB`].
         model: &'static str,
     },
+    /// Espressif USB device that is not the USB-Serial/JTAG (`303A:xxxx`, PID other than
+    /// `1001`): the application firmware's own USB stack on the OTG controller (TinyUSB CDC shows
+    /// up as `303A:4001`). The ROM is not behind it, so it is listed and never opened. Its serial
+    /// number is whatever the app set (TinyUSB's default is `"123456"`), never a MAC.
+    EspressifApp {
+        /// USB Product ID.
+        pid: u16,
+    },
     /// Not a USB port (motherboard UART, Bluetooth, PCI); listed, never probed.
     NotUsb,
     /// USB device not in [`KNOWN_USB`]; listed, never opened.
@@ -203,7 +215,31 @@ impl PortClass {
     pub fn bridge_model(&self) -> Option<&'static str> {
         match self {
             PortClass::Bridge { model, .. } | PortClass::JtagInterface { model } => Some(model),
-            PortClass::Native | PortClass::NotUsb | PortClass::Unknown { .. } => None,
+            PortClass::Native
+            | PortClass::EspressifApp { .. }
+            | PortClass::NotUsb
+            | PortClass::Unknown { .. } => None,
+        }
+    }
+
+    /// Why a port of this class is never tested, as host text for the port lists; `None` for a
+    /// probe candidate.
+    pub fn not_tested_reason(&self) -> Option<String> {
+        match self {
+            PortClass::Native
+            | PortClass::Bridge {
+                ambiguous: false, ..
+            } => None,
+            PortClass::Bridge {
+                model,
+                ambiguous: true,
+            } => Some(format!("{model}, UART channel unknown")),
+            PortClass::JtagInterface { model } => Some(format!("{model} JTAG channel")),
+            PortClass::EspressifApp { .. } => {
+                Some("Espressif USB from the app firmware (USB OTG)".to_owned())
+            }
+            PortClass::NotUsb => Some("not USB".to_owned()),
+            PortClass::Unknown { .. } => Some("unknown device".to_owned()),
         }
     }
 }
@@ -214,6 +250,9 @@ pub fn classify(port: &PortDesc) -> PortClass {
         return PortClass::NotUsb;
     };
     let Some(entry) = lookup(usb.vid, usb.pid) else {
+        if usb.vid == ESPRESSIF_VID {
+            return PortClass::EspressifApp { pid: usb.pid };
+        }
         return PortClass::Unknown {
             vid: usb.vid,
             pid: usb.pid,
@@ -519,6 +558,64 @@ mod tests {
             }
         );
         assert!(!class.is_probe_candidate());
+    }
+
+    /// Bench, 2026-11-26: an S3 whose app uses the OTG controller (TinyUSB CDC) shows up as
+    /// `303A:4001`, serial `"123456"`, interface 0; the USB-Serial/JTAG is not there at all.
+    #[test]
+    fn espressif_app_usb_is_listed_not_probed() {
+        let mut port = usb_port("COM14", 0x303A, 0x4001, Some(0));
+        if let Some(usb) = port.usb.as_mut() {
+            usb.serial = Some("123456".to_owned());
+            usb.product = Some("Dispositivo Serial USB (COM14)".to_owned());
+        }
+        let class = classify(&port);
+        assert_eq!(class, PortClass::EspressifApp { pid: 0x4001 });
+        assert!(!class.is_probe_candidate());
+        assert_eq!(class.bridge_model(), None);
+        assert_eq!(
+            class.not_tested_reason().as_deref(),
+            Some("Espressif USB from the app firmware (USB OTG)")
+        );
+        for pid in [0x0002, 0x1002, 0x4001, 0xFFFF] {
+            assert_eq!(
+                classify(&usb_port("p", ESPRESSIF_VID, pid, None)),
+                PortClass::EspressifApp { pid }
+            );
+        }
+        assert_eq!(
+            classify(&usb_port("p", ESPRESSIF_VID, 0x1001, None)),
+            PortClass::Native
+        );
+    }
+
+    #[test]
+    fn only_probe_candidates_have_no_not_tested_reason() {
+        let ports = [
+            usb_port("p", 0x303A, 0x1001, Some(0)),
+            usb_port("p", 0x303A, 0x4001, Some(0)),
+            usb_port("p", 0x10C4, 0xEA60, None),
+            usb_port("p", 0x0403, 0x6010, Some(0)),
+            usb_port("p", 0x0403, 0x6010, Some(1)),
+            usb_port("p", 0x0403, 0x6010, None),
+            usb_port("p", 0x1234, 0x5678, None),
+            PortDesc {
+                name: "COM1".to_owned(),
+                usb: None,
+            },
+        ];
+        for port in &ports {
+            let class = classify(port);
+            assert_eq!(
+                class.not_tested_reason().is_none(),
+                class.is_probe_candidate(),
+                "{class:?}"
+            );
+        }
+        assert_eq!(
+            classify(&ports[6]).not_tested_reason().as_deref(),
+            Some("unknown device")
+        );
     }
 
     #[test]

@@ -26,6 +26,7 @@
 //! a few places; every call into it goes through [`shield`], so a malformed reply becomes a
 //! [`ProbeError::Protocol`] instead of taking the host down.
 
+use std::cell::Cell;
 use std::error::Error as StdError;
 use std::io;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -215,20 +216,26 @@ impl Probe for EspflashProbe {
     }
 
     fn identity(&mut self) -> Result<ChipIdentity, ProbeError> {
-        self.run(|conn, _| {
-            // Same order as espflash's detect_chip: GET_SECURITY_INFO, then the magic register
-            // when the ROM has no such command (ESP32) or gives no chip id.
-            if let Ok(info) = conn.security_info(USE_STUB)
-                && let Some(id) = info.chip_id
-            {
-                return Ok(ChipIdentity::SecurityChipId(id));
+        // The capability table says how this family identifies itself (ADR-004). Asking the
+        // ESP32 ROM for GET_SECURITY_INFO, which it does not have, costs a full 3 s timeout.
+        let expected = self.chip().ok().map(|chip| chip.caps().identity.value);
+        match identity_read(expected) {
+            IdentityRead::MagicReg(addr) => {
+                let value = self.read_reg(addr)?;
+                Ok(ChipIdentity::MagicReg { addr, value })
             }
-            let value = conn.read_reg(CHIP_DETECT_MAGIC_REG_ADDR)?;
-            Ok(ChipIdentity::MagicReg {
-                addr: CHIP_DETECT_MAGIC_REG_ADDR,
-                value,
-            })
-        })
+            IdentityRead::SecurityInfo => self.run(|conn, _| {
+                if let Some(id) = conn.security_info(USE_STUB)?.chip_id {
+                    return Ok(ChipIdentity::SecurityChipId(id));
+                }
+                // An older ROM answers without a chip id: fall back like espflash's detect_chip.
+                let value = conn.read_reg(CHIP_DETECT_MAGIC_REG_ADDR)?;
+                Ok(ChipIdentity::MagicReg {
+                    addr: CHIP_DETECT_MAGIC_REG_ADDR,
+                    value,
+                })
+            }),
+        }
     }
 
     fn revision(&mut self) -> Result<Revision, ProbeError> {
@@ -288,6 +295,24 @@ impl Probe for EspflashProbe {
     }
 }
 
+/// Which ROM command answers [`Probe::identity`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IdentityRead {
+    /// `READ_REG` of this address only.
+    MagicReg(u32),
+    /// `GET_SECURITY_INFO` (magic register only if the reply has no chip id).
+    SecurityInfo,
+}
+
+/// Picks the read from the table's identity of the detected chip (ADR-004: data, not a `match`
+/// per chip). A chip outside the table (`None`) gets `GET_SECURITY_INFO` first, like espflash.
+fn identity_read(expected: Option<ChipIdentity>) -> IdentityRead {
+    match expected {
+        Some(ChipIdentity::MagicReg { addr, .. }) => IdentityRead::MagicReg(addr),
+        Some(ChipIdentity::SecurityChipId(_)) | None => IdentityRead::SecurityInfo,
+    }
+}
+
 /// Best-effort reset back to the application after a failed connect, so the board does not
 /// stay in download mode (ADR-009 §4). Errors are ignored: the connect error is what matters.
 fn abandon(conn: &mut Connection) {
@@ -297,11 +322,36 @@ fn abandon(conn: &mut Connection) {
 /// Runs a call into espflash, turning a panic into [`ProbeError::Protocol`].
 ///
 /// espflash slices some replies by lengths the board sends (e.g. the response header of
-/// `GET_SECURITY_INFO`), so a corrupted reply could panic inside it.
+/// `GET_SECURITY_INFO`), so a corrupted reply could panic inside it. While `f` runs,
+/// [`in_shield`] is true on this thread, so a panic hook can stay quiet about a panic that is
+/// about to be caught (see `probe::quiet_shielded_panics`).
 pub(crate) fn shield<T>(f: impl FnOnce() -> T) -> Result<T, ProbeError> {
+    SHIELD_DEPTH.with(|depth| depth.set(depth.get().saturating_add(1)));
+    // Dropped after `catch_unwind` returns, on both paths.
+    let _guard = ShieldGuard;
     catch_unwind(AssertUnwindSafe(f)).map_err(|_| {
         ProbeError::Protocol("malformed reply from the ROM (espflash panicked)".to_owned())
     })
+}
+
+thread_local! {
+    /// How many [`shield`] calls are active on this thread (they may nest).
+    static SHIELD_DEPTH: Cell<u32> = const { Cell::new(0) };
+}
+
+/// Leaves one level of [`shield`] when dropped.
+struct ShieldGuard;
+
+impl Drop for ShieldGuard {
+    fn drop(&mut self) {
+        SHIELD_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
+    }
+}
+
+/// True while a [`shield`] call is running on the current thread: a panic now will be caught
+/// and turned into a [`ProbeError::Protocol`].
+pub(crate) fn in_shield() -> bool {
+    SHIELD_DEPTH.with(|depth| depth.get() > 0)
 }
 
 /// Whether `name` is still enumerated by the OS. An enumeration error counts as "listed", so it
@@ -940,6 +990,45 @@ mod tests {
         std::panic::set_hook(hook);
         assert!(matches!(result, Err(ProbeError::Protocol(_))));
         assert_eq!(shield(|| 7), Ok(7));
+    }
+
+    #[test]
+    fn in_shield_is_true_only_inside_shield_even_nested_or_after_a_panic() {
+        assert!(!in_shield());
+        assert_eq!(shield(in_shield), Ok(true));
+        assert_eq!(shield(|| shield(in_shield)), Ok(Ok(true)));
+        assert!(!in_shield());
+        let hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let caught: Result<(), ProbeError> = shield(|| panic!("malformed"));
+        std::panic::set_hook(hook);
+        assert!(caught.is_err());
+        assert!(!in_shield(), "the depth is restored after a caught panic");
+    }
+
+    #[test]
+    fn identity_read_follows_the_capability_table() {
+        for caps in &CHIPS {
+            let read = identity_read(Some(caps.identity.value));
+            match caps.identity.value {
+                ChipIdentity::MagicReg { addr, .. } => {
+                    assert_eq!(read, IdentityRead::MagicReg(addr), "{}", caps.target)
+                }
+                ChipIdentity::SecurityChipId(_) => {
+                    assert_eq!(read, IdentityRead::SecurityInfo, "{}", caps.target)
+                }
+            }
+        }
+        // The original ESP32 goes straight to its magic register (no 3 s GET_SECURITY_INFO
+        // timeout); the C3 asks for the security info.
+        let esp32 = Chip::from_target("esp32").unwrap().caps().identity.value;
+        assert_eq!(
+            identity_read(Some(esp32)),
+            IdentityRead::MagicReg(CHIP_DETECT_MAGIC_REG_ADDR)
+        );
+        let c3 = Chip::from_target("esp32c3").unwrap().caps().identity.value;
+        assert_eq!(identity_read(Some(c3)), IdentityRead::SecurityInfo);
+        assert_eq!(identity_read(None), IdentityRead::SecurityInfo);
     }
 
     #[test]

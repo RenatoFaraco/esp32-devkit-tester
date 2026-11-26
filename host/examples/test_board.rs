@@ -116,7 +116,14 @@ fn main() -> ExitCode {
 
     let clock = SystemClock::new();
     let mut enumerate = || transport::enumerate().unwrap_or_default();
-    let report = runner::run_board(&mut probe, board, &clock, &clock, &mut enumerate);
+    let report = runner::run_board(
+        &mut probe,
+        board,
+        &clock,
+        &clock,
+        &mut enumerate,
+        &mut |_| {},
+    );
     print_report(&style, board, &report);
     ExitCode::from(report.exit_code())
 }
@@ -323,6 +330,9 @@ fn other_label(class: PortClass) -> String {
     match class {
         PortClass::NotUsb => "not USB".to_owned(),
         PortClass::Unknown { vid, pid } => format!("unknown USB {vid:04X}:{pid:04X}"),
+        PortClass::EspressifApp { pid } => {
+            format!("Espressif USB 303A:{pid:04X} from the app firmware (USB OTG)")
+        }
         PortClass::JtagInterface { model } => format!("{model} JTAG channel"),
         PortClass::Bridge { model, .. } => format!("{model} channel unknown"),
         PortClass::Native => "native".to_owned(),

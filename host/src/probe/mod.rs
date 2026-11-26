@@ -28,6 +28,24 @@ use std::fmt;
 use crate::chips::{Chip, ChipIdentity};
 use crate::transport::{Mac, PortDesc};
 
+/// Keeps the panic hook quiet about panics that [`EspflashProbe`] catches.
+///
+/// Every call into espflash runs inside a `catch_unwind` (`shield`), so a malformed reply from
+/// the board becomes a [`ProbeError::Protocol`] instead of a crash. The panic hook, however, runs
+/// *before* the unwind is caught and by default prints the message to stderr, which would
+/// scribble over the TUI. This wraps the hook installed so far (e.g. the one from
+/// `ratatui::init`, which restores the terminal): it is skipped while the panicking thread is
+/// inside the shield, and called as before for every other panic. Install it after the
+/// terminal's hook; it stays installed for the life of the process.
+pub fn quiet_shielded_panics() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if !self::espflash::in_shield() {
+            previous(info);
+        }
+    }));
+}
+
 /// Source of facts about one board, one session at a time.
 ///
 /// Used as `&mut dyn Probe` (object-safe). Every read before a successful
@@ -96,7 +114,9 @@ impl fmt::Display for ProbeError {
         match self {
             ProbeError::Timeout => f.write_str("timeout"),
             ProbeError::Disconnected => f.write_str("port disconnected"),
-            ProbeError::Busy => f.write_str("port busy (open in another program)"),
+            ProbeError::Busy => {
+                f.write_str("port busy: another program (e.g. a serial monitor) has it open")
+            }
             ProbeError::Protocol(detail) => write!(f, "protocol error: {detail}"),
             ProbeError::Unsupported(detail) => write!(f, "unsupported: {detail}"),
             ProbeError::NotConnected => f.write_str("not connected"),
