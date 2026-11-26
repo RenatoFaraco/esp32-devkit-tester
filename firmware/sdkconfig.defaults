@@ -1,0 +1,4 @@
+# Common Kconfig defaults for every target (applied when sdkconfig is (re)generated).
+# Target-specific defaults go in sdkconfig.defaults.<target> (e.g. sdkconfig.defaults.esp32p4,
+# needed for the P4 bring-up); idf.py merges them on top of this file.
+# Intentionally empty for now: the hello project runs on stock IDF defaults.
