@@ -22,9 +22,18 @@ Português nas explicações e em `docs/`; código, nomes, commits e issues em i
   caminhos com `std::path`. CI do host em Windows **e** Linux desde o M0.
 - Comandos para o usuário (README, docs) em PowerShell. No WSL2 o reset do USB-Serial/JTAG
   derruba o repasse USB: não usar o WSL para gravar/testar na fase 1.
-- Firmware: ESP-IDF via `idf.py` (ADR-001). Versão e comandos exatos são fixados no M0 e
-  anotados aqui e no `test-runner`.
-- Host: Rust estável (edition 2024), `cargo`; workspace em `host/`.
+- Firmware: ESP-IDF **v5.5.2** via `idf.py` (ADR-001; guarda em `firmware/CMakeLists.txt`,
+  CI na imagem `espressif/idf:v5.5.2`). Host: Rust stable via `host/rust-toolchain.toml`
+  (edition 2024, MSRV 1.88). Instalação e problemas conhecidos: `docs/project/SETUP.md`.
+- **Comandos fixados** (raiz do repositório, PowerShell; os mesmos no `test-runner`):
+  ```powershell
+  cargo fmt --manifest-path host/Cargo.toml --all -- --check
+  cargo clippy --manifest-path host/Cargo.toml --all-targets -- -D warnings
+  cargo test --manifest-path host/Cargo.toml
+  . .\scripts\Enable-Idf.ps1        # ativa o IDF (contorna Python errado, MSYSTEM, shell)
+  idf.py -C firmware -B firmware/build-<alvo> -D SDKCONFIG=build-<alvo>/sdkconfig set-target <alvo> build
+  ```
+  Uma pasta e um `sdkconfig` por alvo; `SDKCONFIG` é relativo a `firmware/`, `-B` não.
 - Placas (inventário e armadilhas em `docs/context/hardware.md`): na bancada ESP32, C3, C6, S3;
   C5 e P4 a caminho; H2 ainda não comprada. O número da COM muda de máquina para máquina: **nunca fixar porta** em código
   ou config versionada; o host identifica portas por VID:PID.
@@ -75,7 +84,7 @@ esp32-devkit-tester/
 1. Plano antes de editar (modo de planejamento) para qualquer coisa além de ajuste trivial.
 2. Uma tarefa por vez, ligada a uma issue e a um marco do ROADMAP (M0…M5 ↔ versões).
 3. Teste primeiro quando der. Host: `cargo test`, `cargo clippy -- -D warnings`, `cargo fmt --check`.
-   Firmware: build por alvo e testes Unity na placa (comandos fixados no M0).
+   Firmware: build por alvo (comando acima) e, a partir da v0.2, testes Unity na placa.
 4. Commit pequeno por passo que funciona, Conventional Commits (`feat(host):`, `fix(fw):`…).
 5. Release: atualizar `CHANGELOG.md`, marcar o PRD da versão como entregue e promover o próximo
    de rascunho para corrente.
