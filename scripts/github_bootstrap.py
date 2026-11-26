@@ -502,6 +502,7 @@ ISSUES = [
                 "Worker thread (`std::thread` + channel): espflash is blocking; `ui` only receives events",
                 "Ports of one board are probed sequentially, never in parallel (one chip, one ROM)",
                 "Per-test timeout: a hung port becomes FAIL, never a frozen run",
+                "Measures each test through a `Clock` trait (fake clock in tests) so durations are deterministic; the report only receives `duration_ms`",
                 "`q` during a run cancels it and restores the terminal",
             ],
             [
@@ -522,7 +523,8 @@ ISSUES = [
                 "Suites `port`, `rom`, `efuse`, `flash`; tests with status, reason and duration; summary",
                 "Table-vs-read divergence is a `finding` annotation on the test, not a fourth state (ADR-010)",
                 "Interrupted run: the in-flight test is FAIL; tests that depended on the session are SKIP with `not run: <suite/test> failed`; no test is omitted",
-                "Durations injected (clock trait) so snapshots are deterministic",
+                "Durations arrive as `duration_ms` measured by the runner; the `report` does no I/O, not even reading the clock (the `Clock` trait lives in the runner, #20)",
+                "Mirrors `docs/context/spec/report-json.md` (#44) without serde: a live `Run` (every planned test present from the start) and a final `Report`; board text enters as sanitized `SafeText`",
                 "No ratatui/crossterm dependency in `report`",
                 "Text from the board is sanitized before it reaches the model (no escape sequences)",
             ],
