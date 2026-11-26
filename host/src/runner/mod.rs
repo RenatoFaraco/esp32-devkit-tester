@@ -19,10 +19,22 @@
 //! plain string comparison done by `report::Outcome::from_comparison`. [`catalog`] gives the
 //! whole plan for `report::Run::new`, in spec order, so no test can go missing from a report.
 //!
+//! # One board, all its ports (H2, ADR-008)
+//! [`group`] finds the boards behind the enumerated ports (by MAC, never by port name) and
+//! [`run_board`] tests one of them in sequence: primary port first, then the others, waiting
+//! for the native port to re-enumerate after each hard reset.
+//!
 //! The threaded runner with events (ADR-011 §5) comes with #20.
 
+pub mod group;
+
+pub use self::group::{
+    Board, Grouping, Identified, POLL_INTERVAL, PreGroup, REENUMERATE_TIMEOUT, identify, merge,
+    pre_group, run_board,
+};
+
 use std::fmt;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::chips::{ChipCaps, mhz_text};
 use crate::probe::{EmbeddedMem, Probe, ProbeError};
@@ -42,13 +54,45 @@ pub const SKIP_NO_USB_SERIAL_JTAG: &str =
 /// SKIP reason when the chip has USB-Serial/JTAG but no native port is connected (spec §4).
 pub const SKIP_NATIVE_NOT_CONNECTED: &str = "native USB not connected on this board";
 
+/// Why a port of the board gave no MAC.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SyncError {
+    /// The ROM session through this port failed.
+    Probe(ProbeError),
+    /// The port did not come back within [`REENUMERATE_TIMEOUT`] after the hard reset of an
+    /// earlier session, so it was never opened.
+    NotReenumerated,
+}
+
+impl fmt::Display for SyncError {
+    /// The `reason` of the FAIL in the `port` suite (host text, English).
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SyncError::Probe(error) => write!(f, "sync failed: {error}"),
+            SyncError::NotReenumerated => write!(
+                f,
+                "port did not re-enumerate within {} s",
+                REENUMERATE_TIMEOUT.as_secs()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for SyncError {}
+
+impl From<ProbeError> for SyncError {
+    fn from(error: ProbeError) -> Self {
+        SyncError::Probe(error)
+    }
+}
+
 /// What syncing through one port of the board gave.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PortSync {
     /// The port.
     pub port: PortDesc,
-    /// MAC read from the ROM through this port, or why the session failed.
-    pub mac: Result<Mac, ProbeError>,
+    /// MAC read from the ROM through this port, or why there is none.
+    pub mac: Result<Mac, SyncError>,
     /// Time from opening the port to the MAC read (or the failure), in ms.
     pub duration_ms: u64,
 }
@@ -62,17 +106,23 @@ pub fn sync_port(probe: &mut dyn Probe, port: &PortDesc) -> PortSync {
     let mac = probe.connect(port).and_then(|()| probe.mac());
     PortSync {
         port: port.clone(),
-        mac,
+        mac: mac.map_err(SyncError::Probe),
         duration_ms: u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
     }
 }
 
 /// The `port` suite of one board, in catalog order (`uart-bridge`, then `usb-serial-jtag`).
 ///
-/// `caps` is the chip row (from the primary port), `board_mac` the board identity (ADR-008 §1)
-/// and `syncs` one entry per port of the group. At most one port of each kind is expected; if
-/// there are more, the first one counts.
-pub fn port_tests(caps: &ChipCaps, board_mac: Option<Mac>, syncs: &[PortSync]) -> Vec<TestResult> {
+/// `caps` is the chip row (`None` when no port could identify the chip), `board_mac` the board
+/// identity (ADR-008 §1) and `syncs` one entry per port of the group. At most one port of each
+/// kind is expected; if there are more, the first one counts. Without `caps` and without a
+/// native port, `port/usb-serial-jtag` cannot be decided: it is SKIP `not run: <first port
+/// test> failed`, pointing at the port whose sync failed.
+pub fn port_tests(
+    caps: Option<&ChipCaps>,
+    board_mac: Option<Mac>,
+    syncs: &[PortSync],
+) -> Vec<TestResult> {
     let mut tests = Vec::new();
     let bridge = syncs
         .iter()
@@ -88,17 +138,22 @@ pub fn port_tests(caps: &ChipCaps, board_mac: Option<Mac>, syncs: &[PortSync]) -
         });
     }
 
-    let outcome = match (caps.usb_serial_jtag.value, native) {
-        (false, None) => Outcome::skip(SKIP_NO_USB_SERIAL_JTAG),
-        (true, None) => Outcome::skip(SKIP_NATIVE_NOT_CONNECTED),
+    let outcome = match (caps, native) {
+        (Some(caps), None) if caps.usb_serial_jtag.value => {
+            Outcome::skip(SKIP_NATIVE_NOT_CONNECTED)
+        }
+        (Some(_), None) => Outcome::skip(SKIP_NO_USB_SERIAL_JTAG),
+        (None, None) => Outcome::skip(&format!("not run: {UART_BRIDGE} failed")),
         // A native port answered with this board's MAC, but the table says the chip has no
         // USB-Serial/JTAG: the table or the identification is wrong (invariant finding).
-        (false, Some(sync)) if sync.mac.is_ok() => Outcome::from_comparison(
-            caps.chip,
-            "usb_serial_jtag",
-            SafeText::from_host("yes"),
-            sync.duration_ms,
-        ),
+        (Some(caps), Some(sync)) if !caps.usb_serial_jtag.value && sync.mac.is_ok() => {
+            Outcome::from_comparison(
+                caps.chip,
+                "usb_serial_jtag",
+                SafeText::from_host("yes"),
+                sync.duration_ms,
+            )
+        }
         (_, Some(sync)) => synced(board_mac, sync, native_serial_mac(&sync.port)),
     };
     tests.push(TestResult {
@@ -115,8 +170,7 @@ fn synced(board_mac: Option<Mac>, sync: &PortSync, serial_mac: Option<Mac>) -> O
     let read = match &sync.mac {
         Ok(mac) => *mac,
         Err(error) => {
-            let reason = format!("sync failed: {error}");
-            return Outcome::fail(&reason, sync.duration_ms, expected, None);
+            return Outcome::fail(&error.to_string(), sync.duration_ms, expected, None);
         }
     };
     let read_text = Some(SafeText::from_host(&read.to_string()));
@@ -182,6 +236,19 @@ impl Clock for SystemClock {
     }
 }
 
+/// Pauses the runner while it waits for a port to come back. Separate from [`Clock`] so tests
+/// can advance a fake clock instead of sleeping.
+pub trait Sleeper {
+    /// Blocks the calling thread (never the UI thread) for about `duration`.
+    fn sleep(&self, duration: Duration);
+}
+
+impl Sleeper for SystemClock {
+    fn sleep(&self, duration: Duration) {
+        std::thread::sleep(duration);
+    }
+}
+
 /// `rom/chip-identity`: the ROM's chip identity equals the table's (spec §4).
 pub const CHIP_IDENTITY: TestId = TestId::new(Suite::Rom, "chip-identity");
 
@@ -232,9 +299,10 @@ pub const FAIL_MAC_EFUSE_MISMATCH: &str =
 /// The v0.1 test plan of one board, in catalog order (spec §4, D7): `port/uart-bridge` only
 /// when the board has a bridge port, `port/usb-serial-jtag` always, then [`BOARD_TESTS`].
 ///
-/// `caps` is the chip row. No v0.1 test depends on it (a test that does not apply is a SKIP,
-/// never left out), but the catalog is per chip from v0.2 on.
-pub fn catalog(caps: &ChipCaps, has_bridge: bool) -> Vec<TestId> {
+/// `caps` is the chip row (`None` when no port identified the chip). No v0.1 test depends on it
+/// (a test that does not apply is a SKIP, never left out), but the catalog is per chip from
+/// v0.2 on.
+pub fn catalog(caps: Option<&ChipCaps>, has_bridge: bool) -> Vec<TestId> {
     // Every v0.1 chip has the same catalog; see the doc comment.
     let _ = caps;
     let mut plan = Vec::with_capacity(BOARD_TESTS.len() + 2);
@@ -567,7 +635,7 @@ mod tests {
     #[test]
     fn port_suite_skips_usb_serial_jtag_on_esp32() {
         let bridge = sync_with("esp32", &ch9102(), None);
-        let tests = port_tests(caps_of("esp32"), mac_of(&bridge), &[bridge]);
+        let tests = port_tests(Some(caps_of("esp32")), mac_of(&bridge), &[bridge]);
         assert_eq!(ids(&tests), ["port/uart-bridge", "port/usb-serial-jtag"]);
         assert_eq!(tests[0].outcome.state(), State::Pass);
         assert_eq!(
@@ -586,7 +654,7 @@ mod tests {
     #[test]
     fn port_suite_skips_when_native_not_connected() {
         let bridge = sync_with("esp32s3", &ch343(), None);
-        let tests = port_tests(caps_of("esp32s3"), mac_of(&bridge), &[bridge]);
+        let tests = port_tests(Some(caps_of("esp32s3")), mac_of(&bridge), &[bridge]);
         assert_eq!(ids(&tests), ["port/uart-bridge", "port/usb-serial-jtag"]);
         assert_eq!(tests[0].outcome.state(), State::Pass);
         assert_eq!(tests[1].outcome.state(), State::Skip);
@@ -600,7 +668,7 @@ mod tests {
     fn port_suite_has_no_uart_bridge_test_without_bridge() {
         let port = native("E8:F6:0A:F7:FF:D4");
         let sync = sync_with("esp32c6", &port, None);
-        let tests = port_tests(caps_of("esp32c6"), mac_of(&sync), &[sync]);
+        let tests = port_tests(Some(caps_of("esp32c6")), mac_of(&sync), &[sync]);
         assert_eq!(ids(&tests), ["port/usb-serial-jtag"]);
         assert_eq!(tests[0].outcome.state(), State::Pass);
     }
@@ -611,7 +679,7 @@ mod tests {
         let bridge = sync_with("esp32c6", &ch343(), None);
         let native = sync_with("esp32c6", &native("E8:F6:0A:F7:FF:D4"), None);
         let board = mac_of(&bridge);
-        let tests = port_tests(caps_of("esp32c6"), board, &[bridge, native]);
+        let tests = port_tests(Some(caps_of("esp32c6")), board, &[bridge, native]);
         assert_eq!(ids(&tests), ["port/uart-bridge", "port/usb-serial-jtag"]);
         for test in &tests {
             let outcome = &test.outcome;
@@ -632,8 +700,8 @@ mod tests {
     #[test]
     fn port_suite_fails_a_port_that_did_not_sync() {
         let bridge = sync_with("esp32s3", &ch343(), Some(ProbeError::Timeout));
-        assert_eq!(bridge.mac, Err(ProbeError::Timeout));
-        let tests = port_tests(caps_of("esp32s3"), None, &[bridge]);
+        assert_eq!(bridge.mac, Err(SyncError::Probe(ProbeError::Timeout)));
+        let tests = port_tests(Some(caps_of("esp32s3")), None, &[bridge]);
         let fail = &tests[0].outcome;
         assert_eq!(fail.state(), State::Fail);
         assert_eq!(
@@ -649,7 +717,7 @@ mod tests {
         let board = mac_of(&bridge);
         // Native port whose serial number is another board's MAC.
         let other = sync_with("esp32c6", &native("02:00:00:00:00:01"), None);
-        let tests = port_tests(caps_of("esp32c6"), board, &[bridge, other]);
+        let tests = port_tests(Some(caps_of("esp32c6")), board, &[bridge, other]);
         assert_eq!(tests[0].outcome.state(), State::Pass);
         assert_eq!(tests[1].outcome.state(), State::Fail);
         assert_eq!(
@@ -662,7 +730,7 @@ mod tests {
             .unwrap()
             .with_mac(Mac([0x02, 0, 0, 0, 0, 2]));
         let wrong = sync_port(&mut probe, &ch343());
-        let tests = port_tests(caps_of("esp32c6"), board, &[wrong]);
+        let tests = port_tests(Some(caps_of("esp32c6")), board, &[wrong]);
         assert_eq!(tests[0].outcome.state(), State::Fail);
         assert_eq!(
             tests[0].outcome.reason().map(SafeText::as_str),
@@ -675,7 +743,7 @@ mod tests {
         let bridge = sync_with("esp32", &ch9102(), None);
         let board = mac_of(&bridge);
         let odd = sync_with("esp32", &native("1C:C3:AB:D2:25:B4"), None);
-        let tests = port_tests(caps_of("esp32"), board, &[bridge, odd]);
+        let tests = port_tests(Some(caps_of("esp32")), board, &[bridge, odd]);
         let outcome = &tests[1].outcome;
         assert_eq!(outcome.state(), State::Fail);
         let finding = outcome.finding().unwrap();
@@ -735,15 +803,15 @@ mod tests {
 
     /// What the bench example does, through one bridge port: catalog, sync, port suite, board
     /// suites, hard reset, complete.
-    fn run_board(
+    fn run_one_port(
         mut probe: FakeProbe,
         fixture: &str,
         clock: &dyn Clock,
     ) -> (Result<(), Interrupted>, Report, FakeProbe) {
         let caps = caps_of(fixture);
-        let mut run = Run::new("0.1.0", empty_board(), catalog(caps, true));
+        let mut run = Run::new("0.1.0", empty_board(), catalog(Some(caps), true));
         let sync = sync_port(&mut probe, &ch343());
-        for test in port_tests(caps, mac_of(&sync), &[sync]) {
+        for test in port_tests(Some(caps), mac_of(&sync), &[sync]) {
             run.finish(test.id, test.outcome).unwrap();
         }
         let result = run_suites(&mut probe, caps, clock, &mut run);
@@ -817,7 +885,7 @@ mod tests {
             ),
         ];
         for (name, identity, revision, package, psram, embedded, jedec, size) in expected {
-            let (result, report, probe) = run_board(fake(name), name, &FakeClock::new(1));
+            let (result, report, probe) = run_one_port(fake(name), name, &FakeClock::new(1));
             assert_eq!(result, Ok(()), "{name}");
             for id in BOARD_TESTS {
                 let outcome = outcome(&report, id);
@@ -847,7 +915,7 @@ mod tests {
     fn mac_efuse_mismatch_fails_with_expected_and_read() {
         let rom = Mac([0x02, 0, 0, 0, 0, 1]);
         let (result, report, _) =
-            run_board(fake("esp32c6").with_mac(rom), "esp32c6", &FakeClock::new(1));
+            run_one_port(fake("esp32c6").with_mac(rom), "esp32c6", &FakeClock::new(1));
         assert_eq!(result, Ok(()));
         let outcome = outcome(&report, MAC_EFUSE_REG);
         assert_eq!(outcome.state(), State::Fail);
@@ -863,7 +931,7 @@ mod tests {
             Step::ReadReg,
             ProbeError::Unsupported("eFuse MAC register not readable on this chip".to_owned()),
         );
-        let (result, report, _) = run_board(probe, "esp32s3", &FakeClock::new(1));
+        let (result, report, _) = run_one_port(probe, "esp32s3", &FakeClock::new(1));
         assert_eq!(result, Ok(()));
         let outcome = outcome(&report, MAC_EFUSE_REG);
         assert_eq!(outcome.state(), State::Skip);
@@ -885,7 +953,7 @@ mod tests {
     #[test]
     fn identity_mismatch_is_invariant_fail_with_finding() {
         let probe = fake("esp32c6").with_identity(ChipIdentity::SecurityChipId(9));
-        let (result, report, _) = run_board(probe, "esp32c6", &FakeClock::new(1));
+        let (result, report, _) = run_one_port(probe, "esp32c6", &FakeClock::new(1));
         assert_eq!(result, Ok(()));
         let outcome = outcome(&report, CHIP_IDENTITY);
         assert_eq!(outcome.state(), State::Fail);
@@ -901,7 +969,7 @@ mod tests {
     #[test]
     fn crystal_mismatch_is_variable_pass_with_finding() {
         let probe = fake("esp32").with_crystal_mhz(26);
-        let (result, report, _) = run_board(probe, "esp32", &FakeClock::new(1));
+        let (result, report, _) = run_one_port(probe, "esp32", &FakeClock::new(1));
         assert_eq!(result, Ok(()));
         let outcome = outcome(&report, CRYSTAL);
         assert_eq!(outcome.state(), State::Pass);
@@ -929,7 +997,7 @@ mod tests {
                 capacity: blank,
             };
             let probe = fake("esp32c3").with_flash_id(id);
-            let (result, report, _) = run_board(probe, "esp32c3", &FakeClock::new(1));
+            let (result, report, _) = run_one_port(probe, "esp32c3", &FakeClock::new(1));
             assert_eq!(result, Ok(()));
             let jedec = outcome(&report, JEDEC_ID);
             assert_eq!(jedec.state(), State::Fail);
@@ -952,7 +1020,7 @@ mod tests {
         let probe = fake("esp32s3")
             .fail_at(Step::FlashId, ProbeError::Disconnected)
             .fail_at(Step::HardReset, ProbeError::Disconnected);
-        let (result, report, probe) = run_board(probe, "esp32s3", &FakeClock::new(7));
+        let (result, report, probe) = run_one_port(probe, "esp32s3", &FakeClock::new(7));
         assert_eq!(
             result,
             Err(Interrupted {
@@ -982,10 +1050,10 @@ mod tests {
 
         // A timeout early in `rom`: every later test is in the report, pointing at the cause.
         let probe = fake("esp32c6").fail_at(Step::Revision, ProbeError::Timeout);
-        let (result, report, _) = run_board(probe, "esp32c6", &FakeClock::new(1));
+        let (result, report, _) = run_one_port(probe, "esp32c6", &FakeClock::new(1));
         assert_eq!(result.unwrap_err().test, REVISION);
         let ids: Vec<TestId> = report.tests().iter().map(|test| test.id).collect();
-        assert_eq!(ids, catalog(caps_of("esp32c6"), true));
+        assert_eq!(ids, catalog(Some(caps_of("esp32c6")), true));
         assert_eq!(
             text(outcome(&report, REVISION).reason()),
             Some("timeout during the revision read")
@@ -1020,7 +1088,7 @@ mod tests {
             Step::PackageVersion,
             ProbeError::Protocol("unexpected response 0x01".to_owned()),
         );
-        let (result, report, _) = run_board(probe, "esp32c6", &FakeClock::new(1));
+        let (result, report, _) = run_one_port(probe, "esp32c6", &FakeClock::new(1));
         assert_eq!(result, Ok(()));
         let package = outcome(&report, PACKAGE);
         assert_eq!(package.state(), State::Fail);
@@ -1052,16 +1120,16 @@ mod tests {
             let caps = caps_of(fixture);
             let mut with_bridge = vec!["port/uart-bridge", "port/usb-serial-jtag"];
             with_bridge.extend(board);
-            assert_eq!(names(catalog(caps, true)), with_bridge, "{fixture}");
+            assert_eq!(names(catalog(Some(caps), true)), with_bridge, "{fixture}");
             let mut native_only = vec!["port/usb-serial-jtag"];
             native_only.extend(board);
-            assert_eq!(names(catalog(caps, false)), native_only, "{fixture}");
+            assert_eq!(names(catalog(Some(caps), false)), native_only, "{fixture}");
         }
     }
 
     #[test]
     fn durations_come_from_the_clock() {
-        let (_, report, _) = run_board(fake("esp32c6"), "esp32c6", &FakeClock::new(5));
+        let (_, report, _) = run_one_port(fake("esp32c6"), "esp32c6", &FakeClock::new(5));
         for id in BOARD_TESTS {
             assert_eq!(outcome(&report, id).duration_ms(), 5, "{id}");
         }
@@ -1071,7 +1139,7 @@ mod tests {
             Step::EmbeddedPsram,
             ProbeError::Unsupported("no PSRAM field".to_owned()),
         );
-        let (_, report, _) = run_board(probe, "esp32c6", &FakeClock::new(5));
+        let (_, report, _) = run_one_port(probe, "esp32c6", &FakeClock::new(5));
         assert_eq!(outcome(&report, PSRAM).duration_ms(), 0);
     }
 

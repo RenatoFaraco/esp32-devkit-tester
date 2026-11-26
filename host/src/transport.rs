@@ -92,6 +92,10 @@ pub struct UsbEntry {
     pub bridge_model: Option<&'static str>,
     /// Which interfaces are the UART.
     pub interfaces: Interfaces,
+    /// Whether the USB serial number the OS reports is the device's own. `false` when the chip
+    /// has none (CH340, CH340K): Windows then makes one up from the hub position (e.g. `"6"`),
+    /// so it must be treated as absent (`usb_serial: null`, `report-json.md` §3.2).
+    pub serial_trustworthy: bool,
 }
 
 /// Known USB devices; must list every VID:PID of `docs/context/hardware.md` (checked by test).
@@ -102,27 +106,36 @@ pub const KNOWN_USB: &[UsbEntry] = &[
         kind: PortKind::Native,
         bridge_model: None,
         interfaces: Interfaces::Single,
+        serial_trustworthy: true,
     },
-    bridge(0x10C4, 0xEA60, "CP210x", Interfaces::Single),
-    bridge(0x1A86, 0x7523, "CH340", Interfaces::Single),
-    bridge(0x1A86, 0x7522, "CH340K", Interfaces::Single),
-    bridge(0x1A86, 0x55D3, "CH343", Interfaces::Single),
-    bridge(0x1A86, 0x55D4, "CH9102", Interfaces::Single),
+    bridge(0x10C4, 0xEA60, "CP210x", Interfaces::Single, true),
+    bridge(0x1A86, 0x7523, "CH340", Interfaces::Single, false),
+    bridge(0x1A86, 0x7522, "CH340K", Interfaces::Single, false),
+    bridge(0x1A86, 0x55D3, "CH343", Interfaces::Single, true),
+    bridge(0x1A86, 0x55D4, "CH9102", Interfaces::Single, true),
     bridge(
         0x0403,
         0x6010,
         "FTDI",
         Interfaces::Split { uart: 1, jtag: 0 },
+        true,
     ),
 ];
 
-const fn bridge(vid: u16, pid: u16, model: &'static str, interfaces: Interfaces) -> UsbEntry {
+const fn bridge(
+    vid: u16,
+    pid: u16,
+    model: &'static str,
+    interfaces: Interfaces,
+    serial_trustworthy: bool,
+) -> UsbEntry {
     UsbEntry {
         vid,
         pid,
         kind: PortKind::Bridge,
         bridge_model: Some(model),
         interfaces,
+        serial_trustworthy,
     }
 }
 
@@ -131,6 +144,17 @@ pub fn lookup(vid: u16, pid: u16) -> Option<&'static UsbEntry> {
     KNOWN_USB
         .iter()
         .find(|entry| entry.vid == vid && entry.pid == pid)
+}
+
+/// The USB serial number of `port` when it can be believed: `None` for a port without USB, without
+/// a serial number, or whose VID:PID row says the OS makes one up ([`UsbEntry::serial_trustworthy`]).
+/// A VID:PID not in [`KNOWN_USB`] keeps what the OS reported. The text is still untrusted input.
+pub fn trusted_serial(port: &PortDesc) -> Option<&str> {
+    let usb = port.usb.as_ref()?;
+    if lookup(usb.vid, usb.pid).is_some_and(|entry| !entry.serial_trustworthy) {
+        return None;
+    }
+    usb.serial.as_deref()
 }
 
 /// What a port is, decided only from VID:PID and the interface number.

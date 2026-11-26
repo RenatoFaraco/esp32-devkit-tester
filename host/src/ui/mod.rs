@@ -120,6 +120,15 @@ fn event_loop(terminal: &mut ratatui::DefaultTerminal) -> std::io::Result<()> {
     }
 }
 
+/// Gets stdout ready for ANSI colour sequences printed as plain text (bench examples now,
+/// `--no-tui` later). On Windows, crossterm turns on virtual terminal processing for the console
+/// the first time it styles output, so the sequences are interpreted instead of shown; elsewhere
+/// this only writes a colour reset. Call it only when stdout is a terminal. Returns false if
+/// stdout could not be written.
+pub fn prepare_ansi_colors() -> bool {
+    ratatui::crossterm::execute!(std::io::stdout(), ratatui::crossterm::style::ResetColor).is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
