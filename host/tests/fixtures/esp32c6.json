@@ -56,5 +56,9 @@
     "jedec_device": "4018",
     "size_bytes": 16777216
   },
-  "registers": []
+  "identity": { "security_chip_id": 13 },
+  "registers": [
+    { "addr": "0x600B0844", "value": "0x0AF7FFD4", "source": "espefuse dump (same eFuse read registers)" },
+    { "addr": "0x600B0848", "value": "0xFFFEE8F6", "source": "espefuse dump (same eFuse read registers)" }
+  ]
 }

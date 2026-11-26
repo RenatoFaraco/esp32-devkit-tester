@@ -53,5 +53,9 @@
     "efuse_vendor": "AP_3v3",
     "efuse_temp_grade": "85C"
   },
-  "registers": []
+  "identity": { "security_chip_id": 9 },
+  "registers": [
+    { "addr": "0x60007044", "value": "0xDB84140C", "source": "espefuse dump (same eFuse read registers)" },
+    { "addr": "0x60007048", "value": "0x00001051", "source": "espefuse dump (same eFuse read registers)" }
+  ]
 }

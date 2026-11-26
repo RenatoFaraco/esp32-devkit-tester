@@ -40,5 +40,10 @@
     "size_bytes": 4194304,
     "voltage": "3.3V (strapping pin)"
   },
-  "registers": []
+  "identity": { "magic_reg": "0x40001000", "value": "0x00F01D83" },
+  "registers": [
+    { "addr": "0x3FF5A004", "value": "0xABD225B4", "source": "espefuse dump (same eFuse read registers)" },
+    { "addr": "0x3FF5A008", "value": "0x004C1CC3", "source": "espefuse dump (same eFuse read registers)" },
+    { "addr": "0x40001000", "value": "0x00F01D83", "source": "esptool chip_id (chip detection magic register)" }
+  ]
 }
