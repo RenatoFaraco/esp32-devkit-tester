@@ -1,12 +1,14 @@
 //! Architecture guards:
 //! - only `src/ui/` may mention `ratatui` or `crossterm`;
-//! - only `src/platform.rs` / `src/platform/` may use OS-specific `cfg` (ADR-007).
+//! - only `src/platform.rs` / `src/platform/` may use OS-specific `cfg` (ADR-007);
+//! - only `src/chips.rs` may name a specific chip variant (ADR-004: a new chip is a new row).
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 const UI_ONLY_CRATES: [&str; 2] = ["ratatui", "crossterm"];
 const OS_CFG_TERMS: [&str; 4] = ["windows", "unix", "target_os", "target_family"];
+const CHIP_VARIANT_TERMS: [&str; 2] = ["Chip::Esp", "Chip::*"];
 
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in fs::read_dir(dir).unwrap() {
@@ -89,6 +91,26 @@ fn os_cfg_only_in_platform() {
     assert!(
         offenders.is_empty(),
         "OS-specific cfg outside src/platform: {}",
+        offenders.join("; ")
+    );
+}
+
+#[test]
+fn chip_variants_only_in_chips() {
+    let offenders = offending_lines(
+        |src, path| path != src.join("chips.rs"),
+        |line| {
+            let found: Vec<&str> = CHIP_VARIANT_TERMS
+                .into_iter()
+                .filter(|term| line.contains(term))
+                .collect();
+            (!found.is_empty()).then(|| found.join(", "))
+        },
+    );
+
+    assert!(
+        offenders.is_empty(),
+        "chip variants named outside src/chips.rs (use the capability table): {}",
         offenders.join("; ")
     );
 }
