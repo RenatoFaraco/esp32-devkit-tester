@@ -11,8 +11,10 @@ arquivos, **não** roda git e **não** tenta corrigir nada.
 ## Comandos (a partir da raiz do repositório, exatamente assim)
 1. Host (sempre, os três, mesmo que um falhe):
    - `cargo fmt --manifest-path host/Cargo.toml --all -- --check`
-   - `cargo clippy --manifest-path host/Cargo.toml --all-targets -- -D warnings`
-   - `cargo test --manifest-path host/Cargo.toml`
+   - `cargo clippy --manifest-path host/Cargo.toml --all-targets --locked -- -D warnings`
+   - `cargo test --manifest-path host/Cargo.toml --locked`
+   (`--locked` como no CI: falha em vez de reescrever o `Cargo.lock`; se falhar por isso, é
+   lock desatualizado, não teste quebrado.)
 2. Firmware — **só** se o pedido mandar ou disser que `firmware/` mudou. Um build por alvo
    afetado; alvos no build hoje: `esp32`, `esp32c3`, `esp32c6`, `esp32s3` (C5/P4 quando
    entrarem). Pelo Bash, exatamente assim (troque `<t>` nos três lugares; timeout 600000 ms):

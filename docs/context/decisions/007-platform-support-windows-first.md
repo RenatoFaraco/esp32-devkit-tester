@@ -30,8 +30,9 @@ não grava pelo USB-Serial/JTAG no WSL2 (pela UART funciona) e que não suporta 
      binário (PowerShell é só para a documentação e scripts de desenvolvimento);
    - o CI compila e roda os testes do host em **Windows e Linux** desde o M0, mesmo sem
      suporte oficial ao Linux, para pegar código não portátil cedo.
-   - detecção de WSL (`/proc/version` contendo `microsoft`) já registrada como ponto de extensão,
-     sem comportamento especial na fase 1.
+   - detecção de WSL já registrada como ponto de extensão, sem comportamento especial na fase 1:
+     `/proc/sys/kernel/osrelease` contendo `microsoft` → WSL; com `WSL2` ou `microsoft-standard`
+     → WSL2, senão WSL1 (implementada no M0 em `host/src/platform.rs`, com as fontes).
 
 ## Consequências
 - O primeiro usuário (Windows) tem a melhor experiência; os outros sistemas chegam sem

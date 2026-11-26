@@ -28,8 +28,8 @@ Português nas explicações e em `docs/`; código, nomes, commits e issues em i
 - **Comandos fixados** (raiz do repositório, PowerShell; os mesmos no `test-runner`):
   ```powershell
   cargo fmt --manifest-path host/Cargo.toml --all -- --check
-  cargo clippy --manifest-path host/Cargo.toml --all-targets -- -D warnings
-  cargo test --manifest-path host/Cargo.toml
+  cargo clippy --manifest-path host/Cargo.toml --all-targets --locked -- -D warnings
+  cargo test --manifest-path host/Cargo.toml --locked
   . .\scripts\Enable-Idf.ps1        # ativa o IDF (contorna Python errado, MSYSTEM, shell)
   idf.py -C firmware -B firmware/build-<alvo> -D SDKCONFIG=build-<alvo>/sdkconfig set-target <alvo> build
   ```
@@ -38,29 +38,32 @@ Português nas explicações e em `docs/`; código, nomes, commits e issues em i
   C5 e P4 a caminho; H2 ainda não comprada. O número da COM muda de máquina para máquina: **nunca fixar porta** em código
   ou config versionada; o host identifica portas por VID:PID.
 
-## Estrutura (alvo; o M0 cria `firmware/` e `host/`)
+## Estrutura (o M0 entregou o esqueleto; `components/`, `spec/` e `tests/fixtures/` vêm no M1/M2)
 ```
 esp32-devkit-tester/
 ├── CLAUDE.md
 ├── README.md                 inglês, pensado para busca (SEO)
 ├── CHANGELOG.md              Keep a Changelog; uma versão ↔ um PRD
+├── .github/                  workflows (host, firmware, github-config), formulários de issue, template de PR
 ├── .claude/
 │   ├── agents/               subagentes (ver "Subagentes")
 │   └── settings.json         permissões dos comandos de teste
 ├── docs/                     índice em docs/README.md
-│   ├── project/              como trabalhamos: CONVENTIONS, ROADMAP, GITHUB (metadados/SEO)
+│   ├── project/              como trabalhamos: CONVENTIONS, ROADMAP, GITHUB (metadados/SEO), SETUP
 │   └── context/              o que o sistema é e por quê
 │       ├── prd/              um PRD por versão (v0.1 corrente; os demais em rascunho)
 │       ├── decisions/        ADRs curtos (um por arquivo)
 │       ├── spec/             contratos no fio (protocolo de resultados, a partir da v0.2)
 │       └── hardware.md       placas reais: chip, portas, VID:PID, armadilhas
-├── firmware/                 projeto ESP-IDF em C (v0.2+): um build por chip
-│   ├── main/
+├── firmware/                 projeto ESP-IDF em C: um build por chip (`build-<alvo>/`)
+│   ├── CMakeLists.txt        guarda da versão do IDF (≥ 5.5.2)
+│   ├── main/                 hello (M0); flags -Werror=<x> que todo componente copia
 │   ├── components/dkt_*/     testes on-target (Unity) e o emissor de resultados
 │   └── sdkconfig.defaults[.<target>]
 ├── host/                     workspace Cargo: crate `esp32-devkit-tester`, binário `devkit-tester`
-│   └── src/                  transport → probe → runner → report → ui (ratatui)
-└── scripts/                  github_bootstrap.py (labels, milestones, issues)
+│   ├── src/                  platform/transport → probe → runner → report → ui (ratatui)
+│   └── tests/                layering.rs (guardas de camada); fixtures/ a partir do M1
+└── scripts/                  github_bootstrap.py (labels, milestones, issues), Enable-Idf.ps1
 ```
 
 ## Regras de arquitetura
@@ -83,7 +86,7 @@ esp32-devkit-tester/
 ## Fluxo de trabalho
 1. Plano antes de editar (modo de planejamento) para qualquer coisa além de ajuste trivial.
 2. Uma tarefa por vez, ligada a uma issue e a um marco do ROADMAP (M0…M5 ↔ versões).
-3. Teste primeiro quando der. Host: `cargo test`, `cargo clippy -- -D warnings`, `cargo fmt --check`.
+3. Teste primeiro quando der. Host: os três comandos `cargo` do bloco "Comandos fixados".
    Firmware: build por alvo (comando acima) e, a partir da v0.2, testes Unity na placa.
 4. Commit pequeno por passo que funciona, Conventional Commits (`feat(host):`, `fix(fw):`…).
 5. Release: atualizar `CHANGELOG.md`, marcar o PRD da versão como entregue e promover o próximo
