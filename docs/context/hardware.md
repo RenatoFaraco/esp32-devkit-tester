@@ -40,6 +40,12 @@ preencher a linha (citar a fonte na issue de bring-up).
 Conferir cada linha com o Gerenciador de Dispositivos ao fazer o bring-up.
 
 ## Armadilhas conhecidas (herdadas do esp32-logcat)
+- **USB nativa da C6 travada (2026-11-27, Windows, atrás de hub):** depois de desplugar outra placa
+  do mesmo hub, a `303A:1001` da C6 respondeu `ERROR_GEN_FAILURE` ("dispositivo não está
+  funcionando") e depois deu timeout em todo sync, mesmo testada sozinha, até desligar e religar
+  os dois cabos; depois disso, 5/5 execuções com 11/11. O host tenta de novo uma porta não
+  primária que falha (3 tentativas, 500 ms de acomodação após a re-enumeração); a causa raiz fica
+  na issue #65.
 - **Reset do chip derruba a porta nativa, seja qual for a porta usada.** Um hard reset pela
   ponte (RTS → EN) reinicia o chip inteiro, inclusive o USB-Serial/JTAG: a porta `303A:1001`
   some e volta em menos de 2 s (C3 e C6, Windows, 2026-11-26), com o mesmo número de série. O

@@ -47,6 +47,14 @@ pub const POLL_INTERVAL: Duration = Duration::from_millis(200);
 /// as it is: the reset did not drop it, or it dropped and came back between two polls.
 pub const VANISH_GRACE: Duration = Duration::from_secs(1);
 
+/// Pause after a native port reappears and between attempts on it: Windows lists the
+/// USB-Serial/JTAG port again before it answers (bench, C6 on a hub, 2026-11-27: "device not
+/// functioning" or no sync right after re-enumeration).
+pub const NATIVE_SETTLE: Duration = Duration::from_millis(500);
+
+/// Sessions opened on a non-primary port that fails to sync before its failure is reported.
+pub const NATIVE_ATTEMPTS: u32 = 3;
+
 /// How many sessions [`identify`] opens on a bridge whose connect times out.
 ///
 /// Bench, 2026-11-26: an ESP32 DevKit V1 (CH9102) only syncs after several of espflash's reset
@@ -403,10 +411,10 @@ pub fn run_board(
         match current {
             Ok(mut current) => {
                 // A port that just came back (or a hub that re-enumerated after another board was
-                // unplugged) may be listed before Windows lets it open: retry busy/gone opens,
-                // re-finding the port by serial number, within the same re-enumeration window.
-                let start = clock.now_ms();
-                let max_tries = millis(REENUMERATE_TIMEOUT) / millis(POLL_INTERVAL).max(1) + 1;
+                // unplugged) may be listed before it answers: busy, "device not functioning",
+                // gone or no sync at all. Retry any sync failure a bounded number of times,
+                // re-finding the port by serial number; a port that is really broken still fails,
+                // with the last error.
                 let mut tries = 0;
                 let (sync, read) = loop {
                     tries += 1;
@@ -414,17 +422,11 @@ pub fn run_board(
                     let (sync, read) = sync_session(session.as_mut(), &current, chip.is_none());
                     reset = after_session(reset, session.hard_reset());
                     drop(session);
-                    let transient = matches!(
-                        &sync.mac,
-                        Err(SyncError::Probe(
-                            ProbeError::Busy | ProbeError::Disconnected
-                        ))
-                    );
-                    let elapsed = clock.now_ms().saturating_sub(start);
-                    if !transient || tries >= max_tries || elapsed >= millis(REENUMERATE_TIMEOUT) {
+                    let failed = matches!(&sync.mac, Err(SyncError::Probe(_)));
+                    if !failed || tries >= NATIVE_ATTEMPTS {
                         break (sync, read);
                     }
-                    sleeper.sleep(POLL_INTERVAL);
+                    sleeper.sleep(NATIVE_SETTLE);
                     if let Some(found) = enumerate().into_iter().find(|candidate| {
                         candidate.usb.is_some()
                             && candidate.usb.as_ref().map(|u| (u.vid, u.pid, &u.serial))
@@ -589,7 +591,13 @@ fn await_port(
     for _ in 0..max_polls {
         elapsed = clock.now_ms().saturating_sub(start);
         match enumerate().into_iter().find(|candidate| is_same(candidate)) {
-            Some(found) if seen_gone || elapsed >= grace => return Ok(found),
+            Some(found) if seen_gone || elapsed >= grace => {
+                // Listed is not ready: give the re-enumerated device a moment before opening it.
+                if seen_gone {
+                    sleeper.sleep(NATIVE_SETTLE);
+                }
+                return Ok(found);
+            }
             Some(_) => {}
             None => seen_gone = true,
         }
@@ -1160,8 +1168,9 @@ mod tests {
             bench.steps_on("COM12"),
             [Step::Connect, Step::Mac, Step::HardReset]
         );
-        // Three polls waited for: present (not yet gone), gone, gone, back.
-        assert_eq!(time.sleeps.get(), 3);
+        // Three polls waited for (present but not yet gone, gone, gone, back), then the settle
+        // pause before opening the port that came back.
+        assert_eq!(time.sleeps.get(), 4);
 
         let ports = &report.board().ports;
         assert_eq!(ports.len(), 2);
