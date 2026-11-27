@@ -590,9 +590,26 @@ pub(crate) fn select_port(ports: &[PortDesc], wanted: &str) -> Result<PortDesc, 
             let candidates: Vec<String> = ports
                 .iter()
                 .filter(|port| classify(port).is_probe_candidate())
-                .map(|port| match trusted_serial(port) {
-                    Some(serial) => format!("\n  {}  serial {}", safe(&port.name), safe(serial)),
-                    None => format!("\n  {}", safe(&port.name)),
+                .map(|port| {
+                    // Same columns as the board list: name, what it is, and how to select it.
+                    let (model, kind) = match classify(port) {
+                        PortClass::Native => ("USB-Serial/JTAG", "native"),
+                        class => (class.bridge_model().unwrap_or("?"), "bridge"),
+                    };
+                    let mut line = format!(
+                        "\n  {:<6} {:<16} {:<7}",
+                        safe(&port.name).as_str(),
+                        model,
+                        kind
+                    );
+                    match (native_mac(port), trusted_serial(port)) {
+                        (Some(mac), _) => line.push_str(&format!("  --port {mac}")),
+                        (None, Some(serial)) => {
+                            line.push_str(&format!("  --port {}", safe(serial)));
+                        }
+                        (None, None) => line.push_str(&format!("  --port {}", safe(&port.name))),
+                    }
+                    line.trim_end().to_owned()
                 })
                 .collect();
             if !candidates.is_empty() {

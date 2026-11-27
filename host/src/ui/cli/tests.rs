@@ -263,7 +263,8 @@ fn no_board_exits_2_with_empty_stdout() {
         ran.stderr
     );
     assert!(
-        ran.stderr.contains("COM11  serial E8:F6:0A:F7:FF:D4"),
+        ran.stderr
+            .contains("COM11  USB-Serial/JTAG  native   --port e8:f6:0a:f7:ff:d4"),
         "{}",
         ran.stderr
     );
