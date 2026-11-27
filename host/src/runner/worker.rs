@@ -35,7 +35,7 @@ use crate::chips::{Chip, ChipIdentity};
 use crate::probe::{
     EmbeddedMem, EspflashProbe, FlashId, Probe, ProbeError, Revision, quiet_shielded_panics,
 };
-use crate::report::{Report, TestId, TestResult};
+use crate::report::{HardReset, Report, TestId, TestResult};
 use crate::transport::{self, Mac, PortDesc};
 
 /// What the UI asks the runner's thread to do.
@@ -67,8 +67,9 @@ pub enum Event {
     },
     /// The [`Job::Run`] is over: the complete report.
     RunFinished(Report),
-    /// The [`Job::Run`] was cancelled; the board got its hard reset attempt.
-    RunCancelled,
+    /// The [`Job::Run`] was cancelled; the board got its hard reset attempt, and this is how it
+    /// went (`--no-tui` reports it on stderr, spec `report-json.md` §1).
+    RunCancelled(HardReset),
 }
 
 impl From<Progress> for Event {
@@ -288,7 +289,7 @@ where
             &mut observer,
         );
         if self.cancelled() {
-            self.send(Event::RunCancelled);
+            self.send(Event::RunCancelled(report.hard_reset().clone()));
         } else {
             self.send(Event::RunFinished(report));
         }
@@ -614,7 +615,7 @@ mod tests {
     use crate::runner::{BOARD_TESTS, UART_BRIDGE, USB_SERIAL_JTAG};
 
     fn is_end(event: &Event) -> bool {
-        matches!(event, Event::RunFinished(_) | Event::RunCancelled)
+        matches!(event, Event::RunFinished(_) | Event::RunCancelled(_))
     }
 
     #[test]
@@ -699,7 +700,7 @@ mod tests {
         gate.release.send(()).unwrap();
         let events = collect_until(&rx, is_end);
 
-        assert_eq!(events.last(), Some(&Event::RunCancelled));
+        assert!(matches!(events.last(), Some(Event::RunCancelled(reset)) if reset.is_done()));
         assert!(
             !events
                 .iter()
@@ -710,7 +711,7 @@ mod tests {
             .iter()
             .position(|event| *event == Event::TestStarted(BOARD_TESTS[1]))
             .unwrap();
-        assert_eq!(events[after + 1..], [Event::RunCancelled]);
+        assert!(matches!(&events[after + 1..], [Event::RunCancelled(_)]));
 
         // The bridge session got its hard reset; no read after the cancelled one; the native
         // port was never opened.

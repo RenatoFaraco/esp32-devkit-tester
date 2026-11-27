@@ -4,8 +4,8 @@
 //! No I/O and no terminal: testable on its own. It must not import `transport`, `probe`,
 //! `ui`, `ratatui` or `crossterm`. The only crate module it uses is `chips` (pure data).
 //!
-//! The model mirrors `docs/context/spec/report-json.md` (schema v1) without serializing it:
-//! the TUI, the `--no-tui` text and the `--json` document are three renderings of the same
+//! The model mirrors `docs/context/spec/report-json.md` (schema v1); [`json`] serializes it.
+//! The TUI, the `--no-tui` text and the `--json` document are three renderings of the same
 //! [`Report`] (ADR-010).
 //!
 //! # Safe text
@@ -26,6 +26,8 @@
 //! builds (and therefore in `cargo test`) and is normalized to [`NO_REASON_GIVEN`] in release
 //! builds. A `Result` was rejected because every runner call site would have to handle an
 //! error that can only come from a literal; nothing here panics in a release build.
+
+pub mod json;
 
 use std::fmt;
 

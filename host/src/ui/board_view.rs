@@ -30,6 +30,17 @@
 //! from the [`Board`] that was run (the report leaves them out, spec D1) and are only shown on
 //! screen.
 //!
+//! # Compact card (`--no-tui`, approved mockup, issue #24)
+//! [`compact_lines`] is the same panel in three lines, for the plain-text report:
+//! ```text
+//!   Board
+//!     Revision v0.2 · RISC-V × 1 + LP RISC-V · 160 MHz · crystal 40 MHz
+//!     Flash 16 MB external (0x684018) · PSRAM none in package
+//!     Wi-Fi 6 (2.4 GHz) · BLE · IEEE 802.15.4 · USB-Serial/JTAG tested ✓
+//! ```
+//! Same sources and rules as the panel (read wins, `!` on a disagreement, `—` and the reason
+//! when not read), without the source column; a line too long for the width wraps under itself.
+//!
 //! Every text shown here is a [`SafeText`] from the model, a port name through [`safe`] or a
 //! host literal: nothing coming from the board reaches the terminal unsanitized.
 
@@ -44,6 +55,10 @@ use crate::runner::{
     Board, CHIP_IDENTITY, CRYSTAL, EMBEDDED_FLASH, FLASH_SIZE, JEDEC_ID, MAC_EFUSE_REG,
     NO_EMBEDDED_FLASH, PACKAGE, PSRAM, REVISION, SKIP_NATIVE_NOT_CONNECTED, USB_SERIAL_JTAG,
 };
+
+/// Where the compact card's lines start, and where their continuation lines start.
+const COMPACT_INDENT: usize = 4;
+const COMPACT_CONTINUATION: usize = 6;
 
 /// Width of the label column (`USB-Serial/JTAG` and two spaces).
 const LABEL_COLUMN: usize = 17;
@@ -542,4 +557,217 @@ fn port_lines(report: &Report, board: &Board, width: u16) -> Vec<Line<'static>> 
         lines.push(Line::from(spans));
     }
     lines
+}
+
+/// The compact Board card of the `--no-tui` text (see the module docs): a bold `Board` title
+/// and three lines (chip, memory, radios and USB), or one line when the chip is not known.
+pub(super) fn compact_lines(report: &Report, width: u16) -> Vec<Line<'static>> {
+    let mut lines = vec![Line::styled("  Board", bold())];
+    let Some(info) = report.board().chip.as_ref() else {
+        lines.extend(compact_row(&words("chip not identified", gray()), width));
+        return lines;
+    };
+    let fields = info.chip.caps().fields();
+    let table = |name: &str| field(&fields, name);
+
+    let mut chip = words("Revision", gray());
+    match info.revision {
+        Some(revision) => chip.extend(words(&revision.to_string(), Style::new())),
+        None => chip.extend(missing(&not_read(report, REVISION))),
+    }
+    if let (Some(arch), Some(cores)) = (table("arch"), table("cores")) {
+        chip.push(dot());
+        chip.extend(words(arch, Style::new()));
+        chip.push(("×".to_owned(), Style::new()));
+        chip.extend(words(cores, Style::new()));
+        if let Some(lp_core) = table("lp_core").filter(|lp_core| *lp_core != "none") {
+            chip.push(("+".to_owned(), Style::new()));
+            chip.extend(words(lp_core, Style::new()));
+        }
+    }
+    if let Some(clock) = table("max_clock_mhz") {
+        chip.push(dot());
+        chip.extend(words(clock, Style::new()));
+    }
+    chip.push(dot());
+    chip.extend(words("crystal", gray()));
+    chip.extend(read_words(report, CRYSTAL));
+
+    let mut memory = words("Flash", gray());
+    memory.extend(flash_words(report));
+    memory.push(dot());
+    memory.extend(words("PSRAM", gray()));
+    memory.extend(read_words(report, PSRAM));
+
+    let mut radios = Words::new();
+    if let Some(list) = table("radios") {
+        for radio in list.split(", ") {
+            if !radios.is_empty() {
+                radios.push(dot());
+            }
+            radios.extend(words(radio, Style::new()));
+        }
+    }
+    if let Some(usb) = usb_words(report, table("usb_serial_jtag")) {
+        if !radios.is_empty() {
+            radios.push(dot());
+        }
+        radios.extend(usb);
+    }
+
+    for row in [chip, memory, radios] {
+        if !row.is_empty() {
+            lines.extend(compact_row(&row, width));
+        }
+    }
+    lines
+}
+
+/// `—` and the reason in gray: nothing was read.
+fn missing(reason: &str) -> Words {
+    let mut value = vec![("—".to_owned(), Style::new())];
+    value.extend(words(reason, gray()));
+    value
+}
+
+/// What test `id` read, with a yellow `!` when it disagrees with the table or with what the
+/// test expected (as [`Row::read`] marks it); `—` and the reason when nothing was read.
+fn read_words(report: &Report, id: TestId) -> Words {
+    match read_of(report, id) {
+        Ok((outcome, read)) => {
+            let mut value = words(read.as_str(), Style::new());
+            let flagged = outcome.finding().is_some()
+                || outcome
+                    .expected()
+                    .is_some_and(|expected| outcome.read() != Some(expected));
+            if flagged {
+                value.push(("!".to_owned(), yellow()));
+            }
+            value
+        }
+        Err(reason) => missing(&reason),
+    }
+}
+
+/// `16 MB external (0x684018)`: as [`flash_row`], with the JEDEC ID in parentheses.
+fn flash_words(report: &Report) -> Words {
+    let Ok((_, size)) = read_of(report, FLASH_SIZE) else {
+        let reason = match read_of(report, JEDEC_ID) {
+            Err(reason) => reason,
+            Ok(_) => not_read(report, FLASH_SIZE),
+        };
+        return missing(&reason);
+    };
+    let mut value = words(size.as_str(), Style::new());
+    if let Ok((_, embedded)) = read_of(report, EMBEDDED_FLASH) {
+        let place = if embedded.as_str() == NO_EMBEDDED_FLASH {
+            "external"
+        } else {
+            "embedded"
+        };
+        value.push((place.to_owned(), Style::new()));
+    }
+    if let Ok((_, jedec)) = read_of(report, JEDEC_ID) {
+        value.push((format!("({})", jedec.as_str()), Style::new()));
+    }
+    value
+}
+
+/// `USB-Serial/JTAG` and what this board did with it: `tested ✓`, `✕ failed`, `not connected`,
+/// `not tested`, `answered !` (a native port on a chip the table says has none); `None` when
+/// the chip has none (the radios line then ends with the radios).
+fn usb_words(report: &Report, has: Option<&str>) -> Option<Words> {
+    let outcome = outcome_of(report, USB_SERIAL_JTAG);
+    let mut value = words("USB-Serial/JTAG", gray());
+    match outcome {
+        Some(outcome) if outcome.finding().is_some() => {
+            value.push(("answered".to_owned(), Style::new()));
+            value.push(("!".to_owned(), yellow()));
+        }
+        _ if has != Some("yes") => return None,
+        Some(outcome) if outcome.state() == State::Pass => {
+            value.push(("tested".to_owned(), Style::new()));
+            value.push(("✓".to_owned(), green()));
+        }
+        Some(outcome) if outcome.state() == State::Fail => {
+            value.push(("✕".to_owned(), red()));
+            value.push(("failed".to_owned(), red()));
+        }
+        Some(outcome)
+            if outcome.reason().map(SafeText::as_str) == Some(SKIP_NATIVE_NOT_CONNECTED) =>
+        {
+            value.extend(words("not connected", gray()));
+        }
+        _ => value.extend(words("not tested", gray())),
+    }
+    Some(value)
+}
+
+/// One line of the compact card. When it does not fit, it breaks at a `·`, never inside a part
+/// (`crystal 40 MHz` stays together), and goes on two cells further in; a part wider than a
+/// whole line is wrapped between its words.
+fn compact_row(row: &Words, width: u16) -> Vec<Line<'static>> {
+    let first_room = usize::from(width).saturating_sub(COMPACT_INDENT + MARGIN);
+    let room = usize::from(width).saturating_sub(COMPACT_CONTINUATION + MARGIN);
+    let separator = dot();
+    let parts: Vec<&[(String, Style)]> = row
+        .split(|word| *word == separator)
+        .filter(|part| !part.is_empty())
+        .collect();
+    let part_width = |part: &[(String, Style)]| -> usize {
+        let letters: usize = part.iter().map(|(word, _)| word.chars().count()).sum();
+        letters + part.len().saturating_sub(1)
+    };
+
+    let mut rows: Vec<Vec<Span<'static>>> = Vec::new();
+    let mut current: Vec<Span<'static>> = Vec::new();
+    let mut used = 0;
+    for part in parts {
+        let width = part_width(part);
+        let limit = if rows.is_empty() { first_room } else { room };
+        if used > 0 && used + 3 + width <= limit {
+            current.push(Span::styled(" · ", gray()));
+            used += 3;
+        } else if used > 0 {
+            rows.push(std::mem::take(&mut current));
+            used = 0;
+        }
+        let limit = if rows.is_empty() { first_room } else { room };
+        if used == 0 && width > limit {
+            // Wider than a whole line: wrapped on its own, between its words.
+            let words = part.iter().map(|(word, style)| (word.as_str(), *style));
+            let mut wrapped = wrap_words(words, room).into_iter().peekable();
+            while let Some(spans) = wrapped.next() {
+                if wrapped.peek().is_some() {
+                    rows.push(spans);
+                } else {
+                    used = spans.iter().map(Span::width).sum();
+                    current = spans;
+                }
+            }
+            continue;
+        }
+        for (index, (word, style)) in part.iter().enumerate() {
+            if index > 0 {
+                current.push(Span::raw(" "));
+            }
+            current.push(Span::styled(word.clone(), *style));
+        }
+        used += width;
+    }
+    if !current.is_empty() {
+        rows.push(current);
+    }
+    rows.into_iter()
+        .enumerate()
+        .map(|(index, mut spans)| {
+            let indent = if index == 0 {
+                COMPACT_INDENT
+            } else {
+                COMPACT_CONTINUATION
+            };
+            spans.insert(0, Span::raw(" ".repeat(indent)));
+            Line::from(spans)
+        })
+        .collect()
 }

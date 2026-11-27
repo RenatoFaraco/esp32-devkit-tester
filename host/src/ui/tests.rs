@@ -341,7 +341,7 @@ fn q_during_run_requests_cancel_not_quit() {
     let mut stuck = app.clone();
     assert_eq!(stuck.on_key(ctrl_c()), Action::Quit);
 
-    app.on_event(Event::RunCancelled);
+    app.on_event(Event::RunCancelled(HardReset::done()));
     assert_eq!(app.screen, Screen::List);
     assert_eq!(app.on_key(press(KeyCode::Char('q'))), Action::Quit);
 }
@@ -658,7 +658,7 @@ fn ui_loop_never_blocks() {
 
     worker.cancel();
     gate.release.send(()).unwrap();
-    for event in collect_until(&events, |event| *event == Event::RunCancelled) {
+    for event in collect_until(&events, |event| matches!(event, Event::RunCancelled(_))) {
         app.on_event(event);
     }
     assert_eq!(app.screen, Screen::List);
@@ -1650,4 +1650,79 @@ fn board_panel_scrolls_and_wraps_at_60_columns() {
     assert_eq!(lines[12], " Tests: 10 passed, 1 skipped, 11 total");
     app.on_key(press(KeyCode::PageUp));
     assert_eq!(screen_lines_sized(&app, 60, 16)[2], body[hidden - 8]);
+}
+
+// ---- #25: a board unplugged mid-run ----
+
+#[test]
+fn unplug_mid_run_gives_fail_then_not_run() {
+    use crate::runner::worker::Job;
+
+    // The C6's CH343 goes away at the flash ID read (its hard reset fails too); the native port
+    // still answers.
+    let c6 = fixture("esp32c6");
+    let probes = move |port: &PortDesc| -> Box<dyn Probe> {
+        if port.name == "COM13" {
+            Box::new(
+                c6.clone()
+                    .fail_at(Step::FlashId, crate::probe::ProbeError::Disconnected)
+                    .fail_at(Step::HardReset, crate::probe::ProbeError::Disconnected),
+            )
+        } else {
+            Box::new(c6.clone())
+        }
+    };
+    let (tx, events) = mpsc::channel();
+    let worker = Worker::spawn(probes, TestTime::default(), c6_enumerate(), tx).unwrap();
+    let mut app = App::new();
+    let board = crate::runner::worker::testing::c6_board();
+    app.screen = Screen::Running(Live::new(board.clone()));
+    assert!(worker.submit(Job::Run(board)));
+
+    // The UI keeps taking keys and drawing while the run goes on, without waiting on it.
+    let start = Instant::now();
+    let mut keys = 0;
+    while !matches!(app.screen, Screen::Done { .. }) {
+        assert!(start.elapsed() < Duration::from_secs(10), "no report");
+        let step = Instant::now();
+        assert_eq!(app.on_key(press(KeyCode::Down)), Action::None);
+        while let Ok(event) = events.try_recv() {
+            app.on_event(event);
+        }
+        app.tick();
+        let _ = screen_lines(&app);
+        keys += 1;
+        assert!(step.elapsed() < Duration::from_secs(1));
+    }
+    assert!(keys > 0);
+    let Screen::Done { report, .. } = &app.screen else {
+        unreachable!();
+    };
+    let jedec = &report
+        .tests()
+        .iter()
+        .find(|t| t.id == JEDEC_ID)
+        .unwrap()
+        .outcome;
+    assert_eq!(jedec.state(), State::Fail);
+    assert_eq!(
+        jedec.reason().map(SafeText::as_str),
+        Some("port disconnected during the flash ID read")
+    );
+    let size = &report
+        .tests()
+        .iter()
+        .find(|t| t.id == FLASH_SIZE)
+        .unwrap()
+        .outcome;
+    assert_eq!(
+        size.reason().map(SafeText::as_str),
+        Some("not run: flash/jedec-id failed")
+    );
+    assert_eq!(report.exit_code(), 1);
+    let lines = screen_lines(&app);
+    assert!(lines[0].contains("FAIL"), "{}", lines[0]);
+    // Still responsive on Done: q quits.
+    assert_eq!(app.on_key(press(KeyCode::Char('q'))), Action::Quit);
+    assert!(worker.shutdown(Duration::from_secs(5)));
 }
