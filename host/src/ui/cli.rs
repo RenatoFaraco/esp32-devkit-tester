@@ -65,7 +65,7 @@ use crate::platform::{self, Platform};
 use crate::report::json::to_json_line;
 use crate::report::{HardReset, Report};
 use crate::runner::worker::{Event, Job, Worker, silence_shielded_panics};
-use crate::runner::{self, Board, Identified};
+use crate::runner::{self, Board, Grouping, Identified};
 use crate::transport::{self, Mac, PortClass, PortDesc, classify, trusted_serial};
 
 /// Exit code of a run with no failed test.
@@ -421,11 +421,7 @@ impl Session<'_> {
         if !self.stopped(waited, stderr) {
             return None;
         }
-        for result in &found {
-            if let Identified::Failed { port, reason } = result {
-                let _ = writeln!(stderr, "  {}: {}", safe(&port.name), safe(reason));
-            }
-        }
+        let _ = write!(stderr, "{}", failure_lines(&found));
         Some(found)
     }
 
@@ -478,12 +474,7 @@ pub(crate) fn execute(
         return EXIT_NO_RUN;
     }
 
-    let _ = writeln!(
-        stderr,
-        "testing {}{}",
-        board_label(&board, " + "),
-        session.ellipsis()
-    );
+    let _ = writeln!(stderr, "{}", testing_message(&board, session.ellipsis()));
     if !session.worker.submit(Job::Run(board.clone())) {
         let _ = writeln!(stderr, "devkit-tester: the runner thread is gone");
         return EXIT_NO_RUN;
@@ -560,7 +551,7 @@ fn board_label(board: &Board, separator: &str) -> String {
 }
 
 /// The MAC in the USB serial number of a native port, if it is one.
-fn native_mac(port: &PortDesc) -> Option<Mac> {
+pub(super) fn native_mac(port: &PortDesc) -> Option<Mac> {
     if classify(port) != PortClass::Native {
         return None;
     }
@@ -650,29 +641,61 @@ fn board_of_port(session: &Session, wanted: &str, stderr: &mut dyn Write) -> Opt
     }
     let _ = writeln!(
         stderr,
-        "identifying {}; the board is reset back to its app{}",
-        safe(&port.name),
-        session.ellipsis()
+        "{}",
+        identifying_port_message(&port, session.ellipsis())
     );
     let found = session.identify(vec![port.clone()], stderr)?;
-    match found.into_iter().next() {
-        Some(Identified::Found { mac, chip, .. }) => {
-            let board = Board::new(mac, chip, vec![port]);
-            if board.is_none() {
-                let _ = writeln!(stderr, "devkit-tester: {} cannot be tested", safe(wanted));
-            }
-            board
-        }
-        // The reason was printed by `identify`.
-        Some(Identified::Failed { .. }) | None => {
-            let _ = writeln!(
-                stderr,
-                "devkit-tester: could not identify {}; nothing was tested",
-                safe(&port.name)
-            );
+    match board_of_identified(&port, wanted, found.first()) {
+        Ok(board) => Some(board),
+        Err(message) => {
+            let _ = write!(stderr, "{message}");
             None
         }
     }
+}
+
+/// `identifying COM13; the board is reset back to its app…` (`--port` on a bridge).
+pub(super) fn identifying_port_message(port: &PortDesc, ellipsis: &str) -> String {
+    format!(
+        "identifying {}; the board is reset back to its app{ellipsis}",
+        safe(&port.name)
+    )
+}
+
+/// `--port` on a bridge, after its identification: the board of that one port, or the stderr
+/// text (each line ending in `\n`) of why nothing runs. The reason of a failed identification
+/// was already printed by [`failure_lines`].
+pub(super) fn board_of_identified(
+    port: &PortDesc,
+    wanted: &str,
+    found: Option<&Identified>,
+) -> Result<Board, String> {
+    match found {
+        Some(Identified::Found { mac, chip, .. }) => Board::new(*mac, *chip, vec![port.clone()])
+            .ok_or_else(|| format!("devkit-tester: {} cannot be tested\n", safe(wanted))),
+        Some(Identified::Failed { .. }) | None => Err(format!(
+            "devkit-tester: could not identify {}; nothing was tested\n",
+            safe(&port.name)
+        )),
+    }
+}
+
+/// `  COM7: identification failed: timeout`, one line per failed identification.
+pub(super) fn failure_lines(found: &[Identified]) -> String {
+    found
+        .iter()
+        .filter_map(|result| match result {
+            Identified::Failed { port, reason } => {
+                Some(format!("  {}: {}\n", safe(&port.name), safe(reason)))
+            }
+            Identified::Found { .. } => None,
+        })
+        .collect()
+}
+
+/// `testing ESP32-C6 e8:f6:0a:f7:ff:d4 (COM13 + COM11)…`
+pub(super) fn testing_message(board: &Board, ellipsis: &str) -> String {
+    format!("testing {}{ellipsis}", board_label(board, " + "))
 }
 
 /// No `--port`: the only board connected, after identifying the bridges. `None` (code 2) with
@@ -681,39 +704,55 @@ fn only_board(session: &Session, stderr: &mut dyn Write) -> Option<Board> {
     let grouping = runner::pre_group(&session.ports);
     let mut identified = Vec::new();
     if !grouping.unidentified.is_empty() {
-        let count = grouping.unidentified.len();
-        let bridges = grouping
-            .unidentified
-            .iter()
-            .all(|port| matches!(classify(port), PortClass::Bridge { .. }));
-        let noun = match (bridges, count) {
-            (true, 1) => "bridge port",
-            (true, _) => "bridge ports",
-            (false, 1) => "port",
-            (false, _) => "ports",
-        };
         let _ = writeln!(
             stderr,
-            "identifying {count} {noun}; each board is reset back to its app{}",
-            session.ellipsis()
+            "{}",
+            identifying_message(&grouping.unidentified, session.ellipsis())
         );
         identified = session.identify(grouping.unidentified.clone(), stderr)?;
     }
-    let boards = runner::merge(&grouping, &identified);
+    match pick_only_board(&grouping, &identified) {
+        Ok(board) => Some(board),
+        Err(message) => {
+            let _ = write!(stderr, "{message}");
+            None
+        }
+    }
+}
+
+/// `identifying 2 bridge ports; each board is reset back to its app…` (no `--port`).
+pub(super) fn identifying_message(unidentified: &[PortDesc], ellipsis: &str) -> String {
+    let count = unidentified.len();
+    let bridges = unidentified
+        .iter()
+        .all(|port| matches!(classify(port), PortClass::Bridge { .. }));
+    let noun = match (bridges, count) {
+        (true, 1) => "bridge port",
+        (true, _) => "bridge ports",
+        (false, 1) => "port",
+        (false, _) => "ports",
+    };
+    format!("identifying {count} {noun}; each board is reset back to its app{ellipsis}")
+}
+
+/// No `--port`, after identification: the only board, or the stderr text (each line ending in
+/// `\n`) for none or several (code 2).
+pub(super) fn pick_only_board(
+    grouping: &Grouping,
+    identified: &[Identified],
+) -> Result<Board, String> {
+    let boards = runner::merge(grouping, identified);
     match boards.as_slice() {
         [] => {
-            let _ = writeln!(stderr, "devkit-tester: no ESP32 board found");
+            let mut text = "devkit-tester: no ESP32 board found\n".to_owned();
             for port in &grouping.others {
                 let reason = classify(port).not_tested_reason().unwrap_or_default();
-                let _ = writeln!(stderr, "  {} not tested: {reason}", safe(&port.name));
+                text.push_str(&format!("  {} not tested: {reason}\n", safe(&port.name)));
             }
-            None
+            Err(text)
         }
-        [board] => Some(board.clone()),
-        several => {
-            let _ = write!(stderr, "{}", board_list(several));
-            None
-        }
+        [board] => Ok(board.clone()),
+        several => Err(board_list(several)),
     }
 }
 
@@ -833,7 +872,7 @@ impl TextStyle {
 
 /// The lines of the text report (approved mockup, issue #24): the header of the `Done` screen,
 /// the report body, the compact Board card and the summary, between rules.
-fn report_lines(report: &Report, board: &Board, width: u16) -> Vec<Line<'static>> {
+pub(super) fn report_lines(report: &Report, board: &Board, width: u16) -> Vec<Line<'static>> {
     let chip = report.board().chip.as_ref().map(|info| info.chip);
     let verdict = if report.exit_code() == EXIT_PASS {
         Span::styled("PASS", green().add_modifier(Modifier::BOLD))
