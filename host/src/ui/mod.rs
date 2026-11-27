@@ -18,6 +18,11 @@
 //!   second `Ctrl+C` while cancelling quits at once.
 //! - `Done`: `enter` back to the list, `q` quits.
 //!
+//! On `Running` and `Done` the report body scrolls (`↑↓`/`j k` a line, `PgUp`/`PgDn` a page,
+//! `Home`/`End`) between the fixed header and footer; `Done` also keeps its summary fixed. The
+//! layout itself lives in [`report_view`]. [`App::resize`] tells the state the terminal size so
+//! that the keys clamp against what is actually on screen.
+//!
 //! # Loop
 //! [`run`] starts the threads, then `crossterm::event::poll` with a short timeout, drains the
 //! event channel with `try_recv` and redraws from state: the UI never waits on a board.
@@ -36,11 +41,15 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
 
 use crate::chips::Chip;
-use crate::report::{Outcome, Report, SafeText, State, TestId, TestResult};
+use crate::report::{Report, SafeText, TestId, TestResult};
 use crate::runner::watch::Watcher;
 use crate::runner::worker::{Event, Job, Worker, silence_shielded_panics};
 use crate::runner::{self, Board, Grouping, Identified};
 use crate::transport::{self, Mac, PortClass, PortDesc};
+
+mod report_view;
+
+use report_view::{Scroll, ScrollState};
 
 /// Shown in the middle of the list when no port of interest is connected.
 pub const NO_BOARDS_MESSAGE: &str = "No boards detected — plug a board in";
@@ -68,8 +77,9 @@ const MODEL_COLUMN: usize = 16;
 const KIND_COLUMN: usize = 8;
 /// Width of the chip-name column in the board list.
 const CHIP_COLUMN: usize = 10;
-/// Width of the test-name column in the report.
-const TEST_COLUMN: usize = 20;
+
+/// Terminal size assumed until the loop reports the real one (the classic 80×24).
+const DEFAULT_SIZE: (u16, u16) = (80, 24);
 
 /// Chip name shown for a board whose chip is not known yet (native port only, never run).
 const UNKNOWN_CHIP: &str = "ESP32-??";
@@ -102,6 +112,10 @@ pub struct App {
     selected: Option<Mac>,
     screen: Screen,
     tick: usize,
+    /// Scroll position of the report body (`Running` and `Done`).
+    scroll: ScrollState,
+    /// Terminal size (columns, rows) as last drawn; the scroll keys clamp against it.
+    size: (u16, u16),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -164,12 +178,45 @@ impl App {
             selected: None,
             screen: Screen::List,
             tick: 0,
+            scroll: ScrollState::top(),
+            size: DEFAULT_SIZE,
         }
     }
 
     /// Advances the spinner by one frame.
     pub fn tick(&mut self) {
         self.tick = self.tick.wrapping_add(1);
+    }
+
+    /// Records the terminal size (columns, rows); the loop calls it on every draw.
+    pub fn resize(&mut self, width: u16, height: u16) {
+        self.size = (width, height);
+    }
+
+    /// The report body of the current screen laid out for `width`, and the fixed summary under
+    /// it (`Done` only); `None` on the screens that do not show a report.
+    fn report_body(&self, width: u16) -> Option<(Vec<Line<'static>>, Vec<Line<'static>>)> {
+        match &self.screen {
+            Screen::Running(live) => Some((
+                report_view::running_lines(live, self.spinner(), width),
+                Vec::new(),
+            )),
+            Screen::Done { report, .. } => Some((
+                report_view::done_lines(report, width),
+                report_view::summary_lines(report, width),
+            )),
+            _ => None,
+        }
+    }
+
+    /// Scrolls the report body by `step`, against the body as laid out for the last size.
+    fn scroll_report(&mut self, step: Scroll) {
+        let (width, height) = self.size;
+        let page = Rect::new(0, 0, width.min(PAGE_WIDTH), height);
+        if let Some((body, summary)) = self.report_body(page.width) {
+            let viewport = usize::from(Areas::of(page, summary.len()).body.height);
+            self.scroll.apply(step, body.len(), viewport);
+        }
     }
 
     /// The boards as known now: groups from the enumeration joined with the bridges identified
@@ -245,6 +292,12 @@ impl App {
         let ctrl_c =
             key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c');
         let leave = ctrl_c || matches!(key.code, KeyCode::Char('q') | KeyCode::Esc);
+        if matches!(self.screen, Screen::Running(_) | Screen::Done { .. })
+            && let Some(step) = scroll_step(key.code)
+        {
+            self.scroll_report(step);
+            return Action::None;
+        }
         match &mut self.screen {
             Screen::List if leave => Action::Quit,
             Screen::List => self.list_key(key.code),
@@ -312,6 +365,7 @@ impl App {
                 };
                 self.selected = Some(board.mac());
                 self.screen = Screen::Running(Live::new(board.clone()));
+                self.scroll = ScrollState::following();
                 Action::Run(board.clone())
             }
             KeyCode::Char('i') => {
@@ -382,6 +436,7 @@ impl App {
                         self.chips.push((board.mac(), info.chip));
                     }
                     self.screen = Screen::Done { board, report };
+                    self.scroll = ScrollState::top();
                 }
             }
             Event::RunCancelled => {
@@ -407,6 +462,19 @@ fn cancel_key(cancelling: &mut bool, leave: bool, ctrl_c: bool) -> Action {
     }
     *cancelling = true;
     Action::Cancel
+}
+
+/// The scroll step of a key on the report screens, if it is one.
+fn scroll_step(code: KeyCode) -> Option<Scroll> {
+    match code {
+        KeyCode::Up | KeyCode::Char('k') => Some(Scroll::Up),
+        KeyCode::Down | KeyCode::Char('j') => Some(Scroll::Down),
+        KeyCode::PageUp => Some(Scroll::PageUp),
+        KeyCode::PageDown => Some(Scroll::PageDown),
+        KeyCode::Home => Some(Scroll::Home),
+        KeyCode::End => Some(Scroll::End),
+        _ => None,
+    }
 }
 
 // ---- drawing ----
@@ -454,6 +522,54 @@ fn spread<'a>(mut left: Vec<Span<'a>>, right: Vec<Span<'a>>, width: u16) -> Line
     Line::from(left)
 }
 
+/// The rows of a page, top to bottom. The summary and the rule above it are zero rows high on
+/// every screen but `Done`.
+struct Areas {
+    header: Rect,
+    top_rule: Rect,
+    body: Rect,
+    summary_rule: Rect,
+    summary: Rect,
+    bottom_rule: Rect,
+    footer: Rect,
+}
+
+impl Areas {
+    /// Splits `page` for a fixed summary of `summary` lines. One function for drawing and for
+    /// the scroll keys, so both agree on how many body lines are on screen.
+    fn of(page: Rect, summary: usize) -> Areas {
+        let summary = u16::try_from(summary).unwrap_or(u16::MAX);
+        let summary_rule = u16::from(summary > 0);
+        let [
+            header,
+            top_rule,
+            body,
+            summary_rule,
+            summary,
+            bottom_rule,
+            footer,
+        ] = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(0),
+            Constraint::Length(summary_rule),
+            Constraint::Length(summary),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .areas(page);
+        Areas {
+            header,
+            top_rule,
+            body,
+            summary_rule,
+            summary,
+            bottom_rule,
+            footer,
+        }
+    }
+}
+
 /// Draws the whole screen from `app`.
 pub fn draw(frame: &mut Frame, app: &App) {
     let area = frame.area();
@@ -461,39 +577,41 @@ pub fn draw(frame: &mut Frame, app: &App) {
         width: area.width.min(PAGE_WIDTH),
         ..area
     };
-    let [header, top_rule, body, bottom_rule, footer] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Min(0),
-        Constraint::Length(1),
-        Constraint::Length(1),
-    ])
-    .areas(page);
+    let report = app.report_body(page.width);
+    let summary_len = report.as_ref().map_or(0, |(_, summary)| summary.len());
+    let areas = Areas::of(page, summary_len);
 
     let rule = Line::styled(
         format!(" {}", "─".repeat(usize::from(page.width.saturating_sub(2)))),
         gray(),
     );
-    frame.render_widget(Paragraph::new(header_line(app, page.width)), header);
-    frame.render_widget(Paragraph::new(rule.clone()), top_rule);
-    frame.render_widget(Paragraph::new(rule), bottom_rule);
-    frame.render_widget(Paragraph::new(footer_line(app)), footer);
+    frame.render_widget(Paragraph::new(header_line(app, page.width)), areas.header);
+    frame.render_widget(Paragraph::new(rule.clone()), areas.top_rule);
+    frame.render_widget(Paragraph::new(rule.clone()), areas.bottom_rule);
 
-    match &app.screen {
-        Screen::List | Screen::Identifying { .. } => draw_list(frame, app, body),
-        Screen::ConfirmIdentify { ports } => {
-            draw_list(frame, app, body);
-            draw_confirm(frame, ports.len(), body);
+    let mut hidden = (0, 0);
+    match (&app.screen, report) {
+        (_, Some((body, summary))) => {
+            let viewport = usize::from(areas.body.height);
+            let offset = app.scroll.offset(body.len(), viewport);
+            hidden = app.scroll.hidden(body.len(), viewport);
+            let shown: Vec<Line> = body.into_iter().skip(offset).take(viewport).collect();
+            frame.render_widget(Paragraph::new(shown), areas.body);
+            if !summary.is_empty() {
+                frame.render_widget(Paragraph::new(rule), areas.summary_rule);
+                frame.render_widget(Paragraph::new(summary), areas.summary);
+            }
         }
-        Screen::Running(live) => {
-            let lines = running_lines(app, live, body.width);
-            frame.render_widget(Paragraph::new(lines), body);
+        (Screen::ConfirmIdentify { ports }, None) => {
+            draw_list(frame, app, areas.body);
+            draw_confirm(frame, ports.len(), areas.body);
         }
-        Screen::Done { report, .. } => {
-            let lines = done_lines(report, body.width);
-            frame.render_widget(Paragraph::new(lines), body);
-        }
+        (_, None) => draw_list(frame, app, areas.body),
     }
+    frame.render_widget(
+        Paragraph::new(footer_line(app, page.width, hidden)),
+        areas.footer,
+    );
 }
 
 fn header_line(app: &App, width: u16) -> Line<'static> {
@@ -558,8 +676,11 @@ fn board_title(board: &Board, chip: Option<Chip>) -> Vec<Span<'static>> {
     ]
 }
 
-fn footer_line(app: &App) -> Line<'static> {
-    let keys: Vec<(&str, &str)> = match &app.screen {
+/// The key hints and, on the report screens, `↑ N`/`↓ N more` at the right end for the body
+/// lines `hidden` above and below the viewport (`↑↓ scroll` is listed only then).
+fn footer_line(app: &App, width: u16, hidden: (usize, usize)) -> Line<'static> {
+    let scrollable = hidden.0 + hidden.1 > 0;
+    let mut keys: Vec<(&str, &str)> = match &app.screen {
         Screen::List => {
             let mut keys = Vec::new();
             let has_boards = !app.boards().is_empty();
@@ -588,6 +709,9 @@ fn footer_line(app: &App) -> Line<'static> {
         }
         Screen::Done { .. } => vec![("enter", "back to boards"), ("q", "quit")],
     };
+    if scrollable {
+        keys.insert(0, ("↑↓", "scroll"));
+    }
     let mut spans = vec![Span::raw(" ")];
     for (index, (key, label)) in keys.into_iter().enumerate() {
         if index > 0 {
@@ -596,7 +720,14 @@ fn footer_line(app: &App) -> Line<'static> {
         spans.push(Span::styled(key, bold()));
         spans.push(Span::styled(format!(" {label}"), gray()));
     }
-    Line::from(spans)
+    if !scrollable {
+        return Line::from(spans);
+    }
+    spread(
+        spans,
+        report_view::more_indicator(hidden.0, hidden.1),
+        width,
+    )
 }
 
 /// Model and kind of a port, as in the list (`CH343` / `bridge`, `USB-Serial/JTAG` / `native`).
@@ -804,168 +935,6 @@ fn draw_confirm(frame: &mut Frame, count: usize, area: Rect) {
     );
 }
 
-/// The glyph of a finished test: ✓ green, ✕ red, ○ yellow.
-fn glyph(state: State) -> Span<'static> {
-    match state {
-        State::Pass => Span::styled("✓", green()),
-        State::Fail => Span::styled("✕", red()),
-        State::Skip => Span::styled("○", yellow()),
-    }
-}
-
-/// The value column: what was read (or, failing that, what was expected), plus `!` when the
-/// outcome carries a finding.
-fn value_of(outcome: &Outcome) -> String {
-    let value = outcome
-        .read()
-        .or(outcome.expected())
-        .map_or("", SafeText::as_str);
-    match outcome.finding() {
-        Some(_) if value.is_empty() => "!".to_owned(),
-        Some(_) => format!("{value} !"),
-        None => value.to_owned(),
-    }
-}
-
-/// One finished test: glyph, name, value (or the reason, in gray, when there is no value) and
-/// the duration flush right (none on a SKIP).
-fn test_line(test: &TestResult, width: u16) -> Line<'static> {
-    let outcome = &test.outcome;
-    let mut left = vec![
-        Span::raw("    "),
-        glyph(outcome.state()),
-        Span::raw(format!(" {:<TEST_COLUMN$} ", test.id.name)),
-    ];
-    let value = value_of(outcome);
-    if value.is_empty() {
-        if let Some(reason) = outcome.reason() {
-            left.push(Span::styled(reason.to_string(), gray()));
-        }
-    } else {
-        left.push(Span::raw(value));
-    }
-    match outcome.state() {
-        State::Skip => Line::from(left),
-        State::Pass | State::Fail => spread(
-            left,
-            vec![Span::raw(format!("{} ms", outcome.duration_ms()))],
-            width,
-        ),
-    }
-}
-
-/// The reason of a FAIL that also has a value, on its own gray line under the test; a FAIL
-/// without a value already shows its reason in the value column.
-fn reason_line(test: &TestResult) -> Option<Line<'static>> {
-    let outcome = &test.outcome;
-    if outcome.state() != State::Fail || value_of(outcome).is_empty() {
-        return None;
-    }
-    let reason = outcome.reason()?;
-    Some(Line::from(vec![
-        Span::raw(format!("      {:<TEST_COLUMN$} ", "")),
-        Span::styled(format!("└ {reason}"), gray()),
-    ]))
-}
-
-/// A finished test and, on a FAIL, its reason underneath.
-fn result_lines(test: &TestResult, width: u16) -> Vec<(TestId, Line<'static>)> {
-    let mut lines = vec![(test.id, test_line(test, width))];
-    lines.extend(reason_line(test).map(|line| (test.id, line)));
-    lines
-}
-
-/// Suite headers and the lines under them, in catalog order; a suite appears with its first line.
-fn suite_lines<'a>(tests: impl Iterator<Item = (TestId, Line<'a>)>) -> Vec<Line<'a>> {
-    let mut lines = Vec::new();
-    let mut suite = None;
-    for (id, line) in tests {
-        if suite != Some(id.suite) {
-            suite = Some(id.suite);
-            lines.push(Line::styled(format!("  {}", id.suite.as_str()), bold()));
-        }
-        lines.push(line);
-    }
-    lines
-}
-
-fn running_lines(app: &App, live: &Live, width: u16) -> Vec<Line<'static>> {
-    let mut pending = false;
-    let shown = live.plan.iter().flat_map(|id| {
-        if let Some(test) = live.results.iter().find(|test| test.id == *id) {
-            return result_lines(test, width);
-        }
-        if live.current == Some(*id) {
-            let mut spans = vec![
-                Span::raw("    "),
-                Span::styled(app.spinner(), cyan()),
-                Span::raw(format!(" {:<TEST_COLUMN$} ", id.name)),
-            ];
-            if let Some(port) = &live.waiting {
-                spans.push(Span::styled(
-                    format!("waiting for {} to come back…", safe(&port.name)),
-                    gray(),
-                ));
-            }
-            return vec![(*id, Line::from(spans))];
-        }
-        pending = true;
-        Vec::new()
-    });
-    let mut lines = suite_lines(shown);
-    if pending {
-        lines.push(Line::styled("    …", gray()));
-    }
-    lines
-}
-
-fn done_lines(report: &Report, width: u16) -> Vec<Line<'static>> {
-    let mut lines = suite_lines(
-        report
-            .tests()
-            .iter()
-            .flat_map(|test| result_lines(test, width)),
-    );
-    lines.push(Line::raw(""));
-    let summary = report.summary();
-    let mut spans = vec![Span::styled(" Tests: ", bold())];
-    let mut counts = Vec::new();
-    if summary.failed > 0 {
-        counts.push(Span::styled(format!("{} failed", summary.failed), red()));
-    }
-    if summary.passed > 0 {
-        counts.push(Span::styled(format!("{} passed", summary.passed), green()));
-    }
-    if summary.skipped > 0 {
-        counts.push(Span::styled(
-            format!("{} skipped", summary.skipped),
-            yellow(),
-        ));
-    }
-    counts.push(Span::raw(format!("{} total", summary.total)));
-    for (index, count) in counts.into_iter().enumerate() {
-        if index > 0 {
-            spans.push(Span::raw(", "));
-        }
-        spans.push(count);
-    }
-    lines.push(Line::from(spans));
-    let mut reset = vec![Span::raw(" ")];
-    match report.hard_reset().reason() {
-        None => {
-            reset.push(glyph(State::Pass));
-            reset.push(Span::raw(" board back to its app"));
-        }
-        Some(reason) => {
-            reset.push(glyph(State::Fail));
-            reset.push(Span::styled(" board not back to its app", red()));
-            reset.push(Span::styled(format!(" — {reason}"), gray()));
-        }
-    }
-    lines.push(Line::from(reset));
-    lines
-}
-
 // ---- loop ----
 
 /// Runs the TUI until the user quits.
@@ -997,7 +966,11 @@ fn event_loop(
     let mut app = App::new();
     let mut last_tick = Instant::now();
     loop {
-        terminal.draw(|frame| draw(frame, &app))?;
+        terminal.draw(|frame| {
+            let area = frame.area();
+            app.resize(area.width, area.height);
+            draw(frame, &app);
+        })?;
         if term::poll(POLL)?
             && let TermEvent::Key(key) = term::read()?
         {

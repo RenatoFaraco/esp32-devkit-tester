@@ -8,10 +8,15 @@ use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::KeyEventState;
 
 use super::*;
+use crate::report::{BoardInfo, ChipInfo, HardReset, Outcome, Revision, Run, State};
 use crate::runner::worker::testing::{
     C6_MAC, Log, TestTime, c6_enumerate, c6_probes, ch343, collect_until, gate, native, usb,
 };
-use crate::runner::{BOARD_TESTS, CHIP_IDENTITY, UART_BRIDGE, USB_SERIAL_JTAG};
+use crate::runner::{
+    BOARD_TESTS, CHIP_IDENTITY, CRYSTAL, EMBEDDED_FLASH, FAIL_MAC_EFUSE_MISMATCH, FLASH_SIZE,
+    JEDEC_ID, MAC_EFUSE_REG, PACKAGE, PSRAM, REVISION, SKIP_NO_USB_SERIAL_JTAG, UART_BRIDGE,
+    USB_SERIAL_JTAG,
+};
 
 const C3_MAC: &str = "80:53:e0:0a:5d:ac";
 
@@ -96,9 +101,21 @@ fn start_run(app: &mut App) -> Board {
 }
 
 fn screen_lines(app: &App) -> Vec<String> {
-    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    screen_lines_sized(app, 80, 24)
+}
+
+/// The screen drawn on a `width` × `height` terminal, one trimmed string per row.
+fn screen_lines_sized(app: &App, width: u16, height: u16) -> Vec<String> {
+    buffer_rows(&screen_buffer(app, width, height))
+}
+
+fn screen_buffer(app: &App, width: u16, height: u16) -> ratatui::buffer::Buffer {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     terminal.draw(|frame| draw(frame, app)).unwrap();
-    let buffer = terminal.backend().buffer();
+    terminal.backend().buffer().clone()
+}
+
+fn buffer_rows(buffer: &ratatui::buffer::Buffer) -> Vec<String> {
     let width = usize::from(buffer.area.width);
     buffer
         .content()
@@ -111,6 +128,17 @@ fn screen_lines(app: &App) -> Vec<String> {
                 .to_owned()
         })
         .collect()
+}
+
+/// Foreground colour of the first cell of `row` from column `column` that starts `text`.
+fn fg_at(buffer: &ratatui::buffer::Buffer, row: usize, text: &str) -> Color {
+    let rows = buffer_rows(buffer);
+    let line = &rows[row];
+    let byte = line
+        .find(text)
+        .unwrap_or_else(|| panic!("{text:?} not in {line:?}"));
+    let column = line[..byte].chars().count();
+    buffer[(u16::try_from(column).unwrap(), u16::try_from(row).unwrap())].fg
 }
 
 fn screen_text(app: &App) -> String {
@@ -522,6 +550,9 @@ fn running_screen_snapshot() {
     assert_eq!(body[1].chars().count(), body[4].chars().count());
     assert_eq!(body[5], "    …");
     assert_eq!(body[6], "");
+    // Everything fits: no summary block, no scroll hint, no `more` indicator.
+    assert!(lines[22].starts_with(" ───"), "{}", lines[22]);
+    assert!(lines[3..22].iter().all(|line| !line.starts_with(" ───")));
     assert_eq!(lines[23], " q cancel");
 
     // The spinner turns with the loop's tick.
@@ -556,19 +587,21 @@ fn done_screen_snapshot() {
     for id in BOARD_TESTS {
         assert!(text.contains(&format!("✓ {:<20}", id.name)), "{id}\n{text}");
     }
-    assert_eq!(
-        line_starting(&lines, " Tests:"),
-        " Tests: 11 passed, 11 total"
-    );
-    assert_eq!(
-        line_starting(&lines, " ✓ board"),
-        " ✓ board back to its app"
-    );
+    assert_eq!(lines[2], "  port");
     assert!(
-        lines
-            .iter()
-            .all(|line| line.trim_end().chars().count() <= 80)
+        lines[3].starts_with("    ✓ uart-bridge          e8:f6:0a:f7:ff:d4 "),
+        "{}",
+        lines[3]
     );
+    assert!(lines[3].ends_with(" 0 ms"), "{}", lines[3]);
+    // A plain pass has no detail lines: suite headers and one line per test, nothing else.
+    assert_eq!(lines[17], "");
+    // The summary is fixed under the body, between two rules, and the body fits: no scroll.
+    assert!(lines[19].starts_with(" ───"), "{}", lines[19]);
+    assert_eq!(lines[20], " Tests: 11 passed, 11 total");
+    assert_eq!(lines[21], " ✓ board back to its app");
+    assert!(lines[22].starts_with(" ───"), "{}", lines[22]);
+    assert!(lines.iter().all(|line| line.chars().count() < 80));
     assert_eq!(lines[23], " enter back to boards   q quit");
 }
 
@@ -640,4 +673,481 @@ fn board_text_cannot_reach_the_terminal_raw() {
     let text = screen_text(&app);
     assert!(!text.contains('\u{1b}'));
     assert!(text.contains("?[2Jevil"));
+}
+
+// ---- report details, wrapping and scroll (#22) ----
+
+const ESP32_MAC: &str = "1c:c3:ab:d2:25:b4";
+
+fn host(text: &str) -> Option<SafeText> {
+    Some(SafeText::from_host(text))
+}
+
+/// A complete report for `target`, with `outcomes` finished in this order.
+fn report_of(target: &str, outcomes: Vec<(TestId, Outcome)>, reset: HardReset) -> Report {
+    let board = BoardInfo {
+        chip: Some(ChipInfo {
+            chip: chip(target),
+            description: None,
+            revision: Some(Revision { major: 3, minor: 1 }),
+        }),
+        mac: host(ESP32_MAC),
+        ports: Vec::new(),
+    };
+    let plan = outcomes.iter().map(|(id, _)| *id).collect();
+    let mut run = Run::new("0.1.0", board, plan);
+    for (id, outcome) in outcomes {
+        run.finish(id, outcome).unwrap();
+    }
+    run.complete(reset)
+}
+
+/// Spec example 8.4: the ESP32 of the bench with a 26 MHz crystal (a `variable` finding) and
+/// the long SKIP that was cut at 80 columns on the bench.
+fn esp32_report() -> Report {
+    let esp32 = chip("esp32");
+    let same = |ms, value| Outcome::pass(ms, host(value), host(value));
+    let read = |ms, value| Outcome::pass(ms, None, host(value));
+    report_of(
+        "esp32",
+        vec![
+            (UART_BRIDGE, same(2310, ESP32_MAC)),
+            (USB_SERIAL_JTAG, Outcome::skip(SKIP_NO_USB_SERIAL_JTAG)),
+            (
+                CHIP_IDENTITY,
+                same(11, "magic register 0x40001000 = 0x00F01D83"),
+            ),
+            (REVISION, read(14, "v3.1")),
+            (
+                CRYSTAL,
+                Outcome::from_comparison(esp32, "crystal_mhz", SafeText::from_board("26 MHz"), 3),
+            ),
+            (MAC_EFUSE_REG, same(9, ESP32_MAC)),
+            (PACKAGE, read(6, "package 1")),
+            (PSRAM, read(5, "none in package")),
+            (EMBEDDED_FLASH, read(5, "none")),
+            (JEDEC_ID, read(38, "0x5E4016")),
+            (FLASH_SIZE, read(0, "4 MB")),
+        ],
+        HardReset::done(),
+    )
+}
+
+/// An app showing `report` as the result of `board`, on a `width` × `height` terminal.
+fn done_app(report: Report, width: u16, height: u16) -> App {
+    let board = Board::new(mac(ESP32_MAC), Some(chip("esp32")), vec![cp210x("COM9")]).unwrap();
+    let mut app = App::new();
+    app.resize(width, height);
+    app.screen = Screen::Done { board, report };
+    app.scroll = ScrollState::top();
+    app
+}
+
+/// The rows of `lines` from the one equal to `first`, `count` of them.
+fn block<'a>(lines: &'a [String], first: &str, count: usize) -> Vec<&'a str> {
+    let start = lines
+        .iter()
+        .position(|line| line == first)
+        .unwrap_or_else(|| panic!("no line {first:?}:\n{}", lines.join("\n")));
+    lines[start..start + count]
+        .iter()
+        .map(String::as_str)
+        .collect()
+}
+
+/// The test line that starts with `prefix`, checked to end with `duration` flush right.
+fn test_row<'a>(lines: &'a [String], prefix: &str, duration: &str, width: usize) -> &'a str {
+    let line = line_starting(lines, prefix);
+    assert!(line.ends_with(&format!(" {duration}")), "{line}");
+    assert_eq!(line.chars().count(), width - 1, "{line}");
+    line
+}
+
+fn assert_fits(lines: &[String], width: usize) {
+    for line in lines {
+        assert!(line.chars().count() < width, "wider than {width}: {line:?}");
+    }
+}
+
+#[test]
+fn long_skip_reason_wraps_instead_of_being_cut() {
+    let lines = screen_lines_sized(&done_app(esp32_report(), 80, 40), 80, 40);
+    assert_fits(&lines, 80);
+    assert_eq!(
+        block(&lines, "  port", 5),
+        [
+            "  port",
+            "    ✓ uart-bridge          1c:c3:ab:d2:25:b4                            2310 ms",
+            "    ○ usb-serial-jtag",
+            "                           └ chip has no USB-Serial/JTAG; JTAG needs an",
+            "                             external probe (GPIO12-15)",
+        ]
+    );
+    test_row(&lines, "    ✓ uart-bridge ", "2310 ms", 80);
+    test_row(
+        &lines,
+        "    ✓ chip-identity        magic register 0x40001000 = 0x00F01D83 ",
+        "11 ms",
+        80,
+    );
+
+    // At 60 columns the reason still shows whole, the duration stays, the value gives way.
+    let lines = screen_lines_sized(&done_app(esp32_report(), 60, 40), 60, 40);
+    assert_fits(&lines, 60);
+    let start = lines
+        .iter()
+        .position(|line| line == "    ○ usb-serial-jtag")
+        .unwrap();
+    let reason: Vec<&str> = lines[start + 1..]
+        .iter()
+        .take_while(|line| line.starts_with("                           "))
+        .map(|line| line.trim_start().trim_start_matches("└ "))
+        .collect();
+    assert_eq!(reason.join(" "), SKIP_NO_USB_SERIAL_JTAG);
+    assert_eq!(reason.len(), 3, "{reason:?}");
+    assert_eq!(
+        test_row(&lines, "    ✓ chip-identity ", "11 ms", 60),
+        "    ✓ chip-identity        magic register 0x4000100…  11 ms"
+    );
+}
+
+#[test]
+fn fail_shows_expected_read_and_reason() {
+    let c3 = "80:53:e0:0a:5d:ac";
+    let efuse = "80:53:e0:0a:5d:ad";
+    let report = report_of(
+        "esp32c3",
+        vec![
+            (
+                UART_BRIDGE,
+                Outcome::fail("MAC differs between ports", 2, host(c3), host(efuse)),
+            ),
+            (
+                USB_SERIAL_JTAG,
+                Outcome::fail(
+                    "port busy: another program (e.g. a serial monitor) has it open",
+                    5,
+                    None,
+                    None,
+                ),
+            ),
+            (
+                MAC_EFUSE_REG,
+                Outcome::fail(FAIL_MAC_EFUSE_MISMATCH, 17, host(c3), host(efuse)),
+            ),
+        ],
+        HardReset::done(),
+    );
+    let app = done_app(report, 80, 30);
+    let buffer = screen_buffer(&app, 80, 30);
+    let lines = buffer_rows(&buffer);
+    assert_fits(&lines, 80);
+    assert!(lines[0].ends_with("FAIL"), "{}", lines[0]);
+
+    test_row(
+        &lines,
+        "    ✕ mac-efuse-reg        80:53:e0:0a:5d:ad ",
+        "17 ms",
+        80,
+    );
+    assert_eq!(
+        block(
+            &lines,
+            "                           └ expected 80:53:e0:0a:5d:ac (ROM)",
+            4
+        ),
+        [
+            "                           └ expected 80:53:e0:0a:5d:ac (ROM)",
+            "                             read     80:53:e0:0a:5d:ad (eFuse)",
+            "                             MAC decoded from the eFuse words differs from the",
+            "                             ROM MAC",
+        ]
+    );
+    // No value: the reason leaves the value column and wraps underneath.
+    assert_eq!(
+        test_row(&lines, "    ✕ usb-serial-jtag", "5 ms", 80)
+            .trim_end_matches(" 5 ms")
+            .trim_end(),
+        "    ✕ usb-serial-jtag"
+    );
+    // Exactly the room (50 columns at 80) still fits on the row; the rest wraps.
+    assert_eq!(
+        block(
+            &lines,
+            "                           └ port busy: another program (e.g. a serial monitor)",
+            2
+        )[1],
+        "                             has it open"
+    );
+    // `(ROM)`/`(eFuse)` belong to `rom/mac-efuse-reg` only.
+    let uart = block(&lines, &lines[3].clone(), 3);
+    assert_eq!(
+        uart,
+        [
+            lines[3].as_str(),
+            "                           └ expected 80:53:e0:0a:5d:ac",
+            "                             read     80:53:e0:0a:5d:ad",
+        ]
+    );
+    assert!(lines[3].starts_with("    ✕ uart-bridge "), "{}", lines[3]);
+
+    // Labels and the reason in gray, the values in the default colour.
+    let row = lines
+        .iter()
+        .position(|line| line.ends_with("80:53:e0:0a:5d:ac (ROM)"))
+        .unwrap();
+    assert_eq!(fg_at(&buffer, row, "└ expected"), Color::DarkGray);
+    assert_eq!(fg_at(&buffer, row, "expected"), Color::DarkGray);
+    assert_eq!(fg_at(&buffer, row, "80:53"), Color::Reset);
+    assert_eq!(fg_at(&buffer, row, "(ROM)"), Color::DarkGray);
+    assert_eq!(fg_at(&buffer, row + 1, "read"), Color::DarkGray);
+    assert_eq!(fg_at(&buffer, row + 1, "80:53"), Color::Reset);
+    assert_eq!(fg_at(&buffer, row + 2, "MAC decoded"), Color::DarkGray);
+}
+
+#[test]
+fn finding_shows_table_read_kind_and_source() {
+    let app = done_app(esp32_report(), 80, 40);
+    let buffer = screen_buffer(&app, 80, 40);
+    let lines = buffer_rows(&buffer);
+    let line = test_row(&lines, "    ✓ crystal              26 MHz ! ", "3 ms", 80);
+    assert_eq!(
+        block(&lines, line, 4)[1..],
+        [
+            "                           └ table 40 MHz · read 26 MHz",
+            "                             variable (kept as pass) · ESP32 Series Datasheet",
+            "                             v5.3, Features; ESP32 Series Comparison",
+        ]
+    );
+    let row = lines.iter().position(|l| l == line).unwrap();
+    assert_eq!(fg_at(&buffer, row, "!"), Color::Yellow);
+    assert_eq!(fg_at(&buffer, row + 1, "table"), Color::DarkGray);
+    assert_eq!(fg_at(&buffer, row + 1, "40 MHz"), Color::Reset);
+    assert_eq!(fg_at(&buffer, row + 1, "·"), Color::DarkGray);
+    assert_eq!(fg_at(&buffer, row + 2, "variable"), Color::DarkGray);
+    assert_eq!(
+        line_starting(&lines, " Tests:"),
+        " Tests: 10 passed, 1 skipped, 11 total"
+    );
+
+    // An `invariant` finding fails; the finding says why, so the reason is not repeated.
+    let s3 = chip("esp32s3");
+    let identity = Outcome::from_comparison(
+        s3,
+        "identity",
+        SafeText::from_board("security info chip id 13"),
+        12,
+    );
+    assert_eq!(identity.state(), State::Fail);
+    let report = report_of(
+        "esp32s3",
+        vec![(CHIP_IDENTITY, identity)],
+        HardReset::done(),
+    );
+    let lines = screen_lines_sized(&done_app(report, 60, 30), 60, 30);
+    assert_fits(&lines, 60);
+    let text = lines.join("\n");
+    // Too long for one row at 60: `table` and `read` take a row each, values lined up.
+    assert_eq!(
+        block(
+            &lines,
+            "                           └ table security info chip id 9",
+            2
+        )[1],
+        "                             read  security info chip id 13",
+        "{text}"
+    );
+    // The value gives way (no space left before `…`); `!` and the duration stay.
+    test_row(
+        &lines,
+        "    ✕ chip-identity        security info chip id… ! ",
+        "12 ms",
+        60,
+    );
+    assert!(text.contains("invariant (failed) ·"), "{text}");
+    assert!(
+        !text.contains("differs from the capability table"),
+        "{text}"
+    );
+}
+
+/// Footer and first body row of an app at 80 × `height`.
+fn view(app: &App, height: u16) -> (String, String) {
+    let lines = screen_lines_sized(app, 80, height);
+    (lines[usize::from(height) - 1].clone(), lines[2].clone())
+}
+
+#[test]
+fn scroll_keys_move_and_clamp() {
+    // 16 rows: header, rule, 9 body rows, rule, 2 summary rows, rule, footer.
+    let report = esp32_report();
+    let body: Vec<String> = report_view::done_lines(&report, 80)
+        .iter()
+        .map(|line| line.to_string().trim_end().to_owned())
+        .collect();
+    let max = body.len() - 9;
+    assert!(max > 9, "the report must be taller than two pages");
+    let mut app = done_app(report, 80, 16);
+    let first = |app: &App| view(app, 16).1;
+
+    for (key, expected) in [
+        (KeyCode::Up, 0),
+        (KeyCode::Down, 1),
+        (KeyCode::PageDown, 9),
+        (KeyCode::End, max),
+        (KeyCode::Down, max),
+        (KeyCode::PageDown, max),
+        (KeyCode::PageUp, max - 8),
+        (KeyCode::Home, 0),
+        (KeyCode::Char('j'), 1),
+        (KeyCode::Char('k'), 0),
+    ] {
+        assert_eq!(app.on_key(press(key)), Action::None, "{key:?}");
+        assert_eq!(first(&app), body[expected], "after {key:?}");
+    }
+    // Releases do not scroll (Windows reports them too).
+    app.on_key(release(KeyCode::Down));
+    assert_eq!(first(&app), body[0]);
+    // A taller terminal shows everything; the keys then have nothing to move.
+    app.resize(80, 40);
+    app.on_key(press(KeyCode::End));
+    assert_eq!(view(&app, 40).1, body[0]);
+    // Enter still goes back to the list.
+    app.on_key(press(KeyCode::Enter));
+    assert_eq!(app.screen, Screen::List);
+}
+
+#[test]
+fn running_view_follows_unless_user_scrolled() {
+    // 12 rows: header, rule, 8 body rows, rule, footer.
+    let mut app = bench_app();
+    app.resize(80, 12);
+    start_run(&mut app);
+    let last_row = |app: &App| screen_lines_sized(app, 80, 12)[9].clone();
+
+    app.on_event(pass(UART_BRIDGE, 350, C6_MAC));
+    app.on_event(Event::TestFinished(TestResult {
+        id: USB_SERIAL_JTAG,
+        outcome: Outcome::skip(SKIP_NO_USB_SERIAL_JTAG),
+    }));
+    for id in &BOARD_TESTS[..5] {
+        app.on_event(pass(*id, 4, "ok"));
+    }
+    // Following: the newest line is at the bottom, with what scrolled away counted above.
+    assert_eq!(last_row(&app), "    …");
+    let (footer, _) = view(&app, 12);
+    assert!(footer.starts_with(" ↑↓ scroll   q cancel "), "{footer}");
+    assert!(footer.ends_with("↑ 5 more"), "{footer}");
+
+    // The user scrolls up: new results no longer move the view.
+    app.on_key(press(KeyCode::Up));
+    let first = view(&app, 12).1;
+    app.on_event(pass(BOARD_TESTS[5], 4, "ok"));
+    app.on_event(pass(BOARD_TESTS[6], 4, "ok"));
+    assert_eq!(view(&app, 12).1, first);
+    assert_ne!(last_row(&app), "    …");
+    assert!(
+        view(&app, 12).0.ends_with("↓ 3 more"),
+        "{}",
+        view(&app, 12).0
+    );
+
+    // Back to the bottom (End, or ↓ until the end) follows again.
+    app.on_key(press(KeyCode::End));
+    app.on_event(pass(BOARD_TESTS[7], 38, "0xEF4016"));
+    assert_eq!(last_row(&app), "    …");
+    app.on_key(press(KeyCode::Up));
+    app.on_key(press(KeyCode::Down));
+    app.on_event(Event::TestStarted(BOARD_TESTS[8]));
+    assert!(
+        last_row(&app).starts_with("    ⠋ size"),
+        "{}",
+        last_row(&app)
+    );
+    // Scrolling never cancels: `q` still does.
+    assert_eq!(app.on_key(press(KeyCode::Char('q'))), Action::Cancel);
+}
+
+#[test]
+fn more_indicator_counts_hidden_lines() {
+    let report = esp32_report();
+    let hidden = report_view::done_lines(&report, 80).len() - 9;
+    let mut app = done_app(report, 80, 16);
+    let footer = |app: &App| view(app, 16).0;
+
+    let first = footer(&app);
+    assert!(
+        first.starts_with(" ↑↓ scroll   enter back to boards   q quit "),
+        "{first}"
+    );
+    assert!(first.ends_with(&format!(" ↓ {hidden} more")), "{first}");
+    assert_eq!(first.chars().count(), 79, "flush right: {first}");
+
+    app.on_key(press(KeyCode::Down));
+    app.on_key(press(KeyCode::Down));
+    assert!(
+        footer(&app).ends_with(&format!(" ↑ 2  ↓ {} more", hidden - 2)),
+        "{}",
+        footer(&app)
+    );
+    app.on_key(press(KeyCode::End));
+    assert!(
+        footer(&app).ends_with(&format!(" ↑ {hidden} more")),
+        "{}",
+        footer(&app)
+    );
+
+    // Everything fits: no indicator and no scroll hint.
+    let tall = done_app(esp32_report(), 80, 40);
+    assert_eq!(view(&tall, 40).0, " enter back to boards   q quit");
+}
+
+#[test]
+fn summary_and_footer_stay_visible_when_scrolled() {
+    let mut app = done_app(esp32_report(), 80, 16);
+    for key in [KeyCode::Home, KeyCode::PageDown, KeyCode::End] {
+        app.on_key(press(key));
+        let lines = screen_lines_sized(&app, 80, 16);
+        assert!(
+            lines[0].starts_with(" ESP32  ·  1c:c3:ab:d2:25:b4  ·  COM9 "),
+            "{key:?}"
+        );
+        assert!(lines[0].ends_with("PASS"), "{key:?}");
+        assert!(lines[1].starts_with(" ───"), "{key:?}");
+        assert!(lines[11].starts_with(" ───"), "{key:?}");
+        assert_eq!(
+            lines[12], " Tests: 10 passed, 1 skipped, 11 total",
+            "{key:?}"
+        );
+        assert_eq!(lines[13], " ✓ board back to its app", "{key:?}");
+        assert!(lines[14].starts_with(" ───"), "{key:?}");
+        assert!(
+            lines[15].starts_with(" ↑↓ scroll   enter back to boards"),
+            "{key:?}"
+        );
+        assert_fits(&lines, 80);
+    }
+
+    // A missed reset with a long reason wraps in the fixed block instead of being cut.
+    let reason = "port disconnected while waiting for the ROM to answer the reset sequence";
+    let report = report_of(
+        "esp32",
+        vec![(UART_BRIDGE, Outcome::fail("no sync", 3, None, None))],
+        HardReset::not_done(reason),
+    );
+    let lines = screen_lines_sized(&done_app(report, 60, 16), 60, 16);
+    assert_fits(&lines, 60);
+    let start = lines
+        .iter()
+        .position(|line| line.starts_with(" ✕ board not back to its app"))
+        .unwrap_or_else(|| panic!("{}", lines.join("\n")));
+    let text: Vec<&str> = lines[start..start + 2]
+        .iter()
+        .map(|line| line.trim())
+        .collect();
+    assert_eq!(
+        text.join(" "),
+        format!("✕ board not back to its app — {reason}")
+    );
+    assert!(lines[start + 2].starts_with(" ───"));
 }
