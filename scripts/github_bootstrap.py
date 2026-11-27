@@ -656,6 +656,50 @@ ISSUES = [
     ),
     (
         M1,
+        ["docs"],
+        "docs: user manual with real screenshots (pt-BR + en)",
+        body(
+            "A manual for people who use the tester, built the same way as esp32-logcat's: every terminal image is a real bench session redrawn by the tool's own code.",
+            [
+                "`docs/project/MANUAL.md` (pt-BR) and `MANUAL.en.md`: start here, first test from scratch, reading each screen, what happens in each situation, script/CI mode (`--no-tui`, `--json`, `--port`, exit codes), the board's ports, guarantees (the board leaves as it came), troubleshooting, quick reference, how the images were made",
+                "`host/examples/record_session.rs` records a real read-only run (ports, identifications, spec report) into `docs/project/manual/sessions/<name>.json`; port names live only there, never in the spec JSON",
+                "`host/examples/manual_screenshots.rs` redraws each session with the same TUI/text code into SVG under `docs/project/manual/img/`; deterministic",
+                "`report::json::parse` (inverse of `to_json_line`) and `Deserialize` on port types, tested against the spec examples",
+                "Sessions: C6 both ports, C3 (logcat firmware), ESP32 DevKit V1, S3 with USB OTG demo, busy port, unplug mid-run, two boards, JSON",
+                "Links from README and docs/README.md",
+            ],
+            [
+                "Both manuals render on GitHub with every image present (a test checks that every image the manual cites exists)",
+                "Running `manual_screenshots` twice changes no file",
+                "Owner reviewed the rendered manual",
+            ],
+            "PRD v0.1 H1–H9 · report-json.md · hardware.md · esp32-logcat docs/project/MANUAL.md",
+            depends="--no-tui/--json (#24), bench results (#59)",
+        ),
+    ),
+    (
+        M1,
+        ["board", "test", "docs"],
+        "test: remaining bench sessions for the manual and the native-port wedge",
+        body(
+            "Record the bench sessions the manual still shows only as text, and pin down the C6 native-port wedge seen while recording.",
+            [
+                "Record with `host/examples/record_session.rs`, then regenerate with `manual_screenshots`: `busy` (C6 with esp32-logcat open on the native port), `unplug` (cable pulled mid-run, criterion 3), `esp32` (DevKit V1, USB-Serial/JTAG SKIP), `s3_otg` (S3 demo firmware on USB OTG, `303A:4001` under Other ports), `json` (C3 by `--port <MAC>`)",
+                "Replace the text-only examples in `MANUAL.md`/`MANUAL.en.md` §3 with the generated images",
+                "Native-port wedge (C6 on a hub, 2026-11-27): after unplugging another board from the same hub, the C6 USB-Serial/JTAG answered `ERROR_GEN_FAILURE` (\"device not functioning\") and then timed out on every sync, even probed alone, until both cables were unplugged and replugged; afterwards 5/5 runs passed 11/11",
+                "Host already retries a non-primary port that fails to sync (3 attempts, 500 ms settle after re-enumeration); confirm on the bench that it covers the intermittent case and that a wedged port still fails with a readable reason",
+                "Find out whether the wedge needs the hub event or can be triggered by our own reset/reopen timing; record in `hardware.md`",
+            ],
+            [
+                "All eight sessions recorded and their images in the manual",
+                "Wedge reproduced or ruled out, with the finding in `hardware.md`",
+            ],
+            "PRD v0.1 §7 criteria 2–3 · hardware.md · #64",
+            depends="user manual (#64)",
+        ),
+    ),
+    (
+        M1,
         ["board", "test"],
         "test: verify no byte is written to flash",
         body(

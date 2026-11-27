@@ -55,6 +55,7 @@ use crate::transport::{self, Mac, PortClass, PortDesc};
 
 mod board_view;
 pub mod cli;
+pub mod manual;
 mod report_view;
 
 use report_view::{Scroll, ScrollState};

@@ -1,0 +1,215 @@
+{
+  "format_version": 1,
+  "captured": {
+    "date": "2026-11-27T23:00:12Z",
+    "host_version": "0.0.1",
+    "note": "C3 of esp32-logcat, CH340K + native",
+    "port": null,
+    "run": true
+  },
+  "ports": [
+    {
+      "name": "COM5",
+      "usb": {
+        "vid": "1A86",
+        "pid": "7522",
+        "serial": "6",
+        "manufacturer": "wch.cn",
+        "product": "USB-SERIAL CH340K (COM5)",
+        "interface": null
+      }
+    },
+    {
+      "name": "COM6",
+      "usb": {
+        "vid": "303A",
+        "pid": "1001",
+        "serial": "80:53:E0:0A:5D:AC",
+        "manufacturer": "Microsoft",
+        "product": "Dispositivo Serial USB (COM6)",
+        "interface": 0
+      }
+    }
+  ],
+  "identified": [
+    {
+      "result": "found",
+      "port": {
+        "name": "COM5",
+        "usb": {
+          "vid": "1A86",
+          "pid": "7522",
+          "serial": "6",
+          "manufacturer": "wch.cn",
+          "product": "USB-SERIAL CH340K (COM5)",
+          "interface": null
+        }
+      },
+      "mac": "80:53:e0:0a:5d:ac",
+      "chip": "esp32c3",
+      "reset": {
+        "done": true,
+        "reason": null
+      }
+    }
+  ],
+  "report": {
+    "board": {
+      "chip": {
+        "description": null,
+        "name": "ESP32-C3",
+        "revision": {
+          "major": 0,
+          "minor": 4
+        },
+        "target": "esp32c3"
+      },
+      "mac": "80:53:e0:0a:5d:ac",
+      "ports": [
+        {
+          "bridge_model": "CH340K",
+          "kind": "bridge",
+          "pid": "7522",
+          "primary": true,
+          "usb_serial": null,
+          "vid": "1A86"
+        },
+        {
+          "bridge_model": null,
+          "kind": "native",
+          "pid": "1001",
+          "primary": false,
+          "usb_serial": "80:53:E0:0A:5D:AC",
+          "vid": "303A"
+        }
+      ]
+    },
+    "hard_reset": {
+      "done": true,
+      "reason": null
+    },
+    "schema_version": 1,
+    "summary": {
+      "failed": 0,
+      "passed": 11,
+      "skipped": 0,
+      "total": 11
+    },
+    "tests": [
+      {
+        "duration_ms": 372,
+        "expected": "80:53:e0:0a:5d:ac",
+        "finding": null,
+        "name": "uart-bridge",
+        "read": "80:53:e0:0a:5d:ac",
+        "reason": null,
+        "state": "pass",
+        "suite": "port"
+      },
+      {
+        "duration_ms": 325,
+        "expected": "80:53:e0:0a:5d:ac",
+        "finding": null,
+        "name": "usb-serial-jtag",
+        "read": "80:53:e0:0a:5d:ac",
+        "reason": null,
+        "state": "pass",
+        "suite": "port"
+      },
+      {
+        "duration_ms": 6,
+        "expected": "security info chip id 5",
+        "finding": null,
+        "name": "chip-identity",
+        "read": "security info chip id 5",
+        "reason": null,
+        "state": "pass",
+        "suite": "rom"
+      },
+      {
+        "duration_ms": 12,
+        "expected": null,
+        "finding": null,
+        "name": "revision",
+        "read": "v0.4",
+        "reason": null,
+        "state": "pass",
+        "suite": "rom"
+      },
+      {
+        "duration_ms": 0,
+        "expected": "40 MHz",
+        "finding": null,
+        "name": "crystal",
+        "read": "40 MHz",
+        "reason": null,
+        "state": "pass",
+        "suite": "rom"
+      },
+      {
+        "duration_ms": 16,
+        "expected": "80:53:e0:0a:5d:ac",
+        "finding": null,
+        "name": "mac-efuse-reg",
+        "read": "80:53:e0:0a:5d:ac",
+        "reason": null,
+        "state": "pass",
+        "suite": "rom"
+      },
+      {
+        "duration_ms": 4,
+        "expected": null,
+        "finding": null,
+        "name": "package",
+        "read": "package 0",
+        "reason": null,
+        "state": "pass",
+        "suite": "efuse"
+      },
+      {
+        "duration_ms": 0,
+        "expected": null,
+        "finding": null,
+        "name": "psram",
+        "read": "none in package",
+        "reason": null,
+        "state": "pass",
+        "suite": "efuse"
+      },
+      {
+        "duration_ms": 8,
+        "expected": null,
+        "finding": null,
+        "name": "embedded-flash",
+        "read": "4 MB (XMC)",
+        "reason": null,
+        "state": "pass",
+        "suite": "efuse"
+      },
+      {
+        "duration_ms": 54,
+        "expected": null,
+        "finding": null,
+        "name": "jedec-id",
+        "read": "0x464016",
+        "reason": null,
+        "state": "pass",
+        "suite": "flash"
+      },
+      {
+        "duration_ms": 0,
+        "expected": null,
+        "finding": null,
+        "name": "size",
+        "read": "4 MB",
+        "reason": null,
+        "state": "pass",
+        "suite": "flash"
+      }
+    ],
+    "tool": {
+      "name": "devkit-tester",
+      "version": "0.0.1"
+    }
+  }
+}

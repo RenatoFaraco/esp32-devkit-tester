@@ -1,0 +1,215 @@
+{
+  "format_version": 1,
+  "captured": {
+    "date": "2026-11-27T23:14:42Z",
+    "host_version": "0.0.1",
+    "note": "C6, CH343 + native",
+    "port": null,
+    "run": true
+  },
+  "ports": [
+    {
+      "name": "COM13",
+      "usb": {
+        "vid": "1A86",
+        "pid": "55D3",
+        "serial": "5D16086713",
+        "manufacturer": "wch.cn",
+        "product": "USB-Enhanced-SERIAL CH343 (COM13)",
+        "interface": null
+      }
+    },
+    {
+      "name": "COM11",
+      "usb": {
+        "vid": "303A",
+        "pid": "1001",
+        "serial": "E8:F6:0A:F7:FF:D4",
+        "manufacturer": "Microsoft",
+        "product": "Dispositivo Serial USB (COM11)",
+        "interface": 0
+      }
+    }
+  ],
+  "identified": [
+    {
+      "result": "found",
+      "port": {
+        "name": "COM13",
+        "usb": {
+          "vid": "1A86",
+          "pid": "55D3",
+          "serial": "5D16086713",
+          "manufacturer": "wch.cn",
+          "product": "USB-Enhanced-SERIAL CH343 (COM13)",
+          "interface": null
+        }
+      },
+      "mac": "e8:f6:0a:f7:ff:d4",
+      "chip": "esp32c6",
+      "reset": {
+        "done": true,
+        "reason": null
+      }
+    }
+  ],
+  "report": {
+    "board": {
+      "chip": {
+        "description": null,
+        "name": "ESP32-C6",
+        "revision": {
+          "major": 0,
+          "minor": 2
+        },
+        "target": "esp32c6"
+      },
+      "mac": "e8:f6:0a:f7:ff:d4",
+      "ports": [
+        {
+          "bridge_model": "CH343",
+          "kind": "bridge",
+          "pid": "55D3",
+          "primary": true,
+          "usb_serial": "5D16086713",
+          "vid": "1A86"
+        },
+        {
+          "bridge_model": null,
+          "kind": "native",
+          "pid": "1001",
+          "primary": false,
+          "usb_serial": "E8:F6:0A:F7:FF:D4",
+          "vid": "303A"
+        }
+      ]
+    },
+    "hard_reset": {
+      "done": true,
+      "reason": null
+    },
+    "schema_version": 1,
+    "summary": {
+      "failed": 0,
+      "passed": 11,
+      "skipped": 0,
+      "total": 11
+    },
+    "tests": [
+      {
+        "duration_ms": 350,
+        "expected": "e8:f6:0a:f7:ff:d4",
+        "finding": null,
+        "name": "uart-bridge",
+        "read": "e8:f6:0a:f7:ff:d4",
+        "reason": null,
+        "state": "pass",
+        "suite": "port"
+      },
+      {
+        "duration_ms": 320,
+        "expected": "e8:f6:0a:f7:ff:d4",
+        "finding": null,
+        "name": "usb-serial-jtag",
+        "read": "e8:f6:0a:f7:ff:d4",
+        "reason": null,
+        "state": "pass",
+        "suite": "port"
+      },
+      {
+        "duration_ms": 5,
+        "expected": "security info chip id 13",
+        "finding": null,
+        "name": "chip-identity",
+        "read": "security info chip id 13",
+        "reason": null,
+        "state": "pass",
+        "suite": "rom"
+      },
+      {
+        "duration_ms": 5,
+        "expected": null,
+        "finding": null,
+        "name": "revision",
+        "read": "v0.2",
+        "reason": null,
+        "state": "pass",
+        "suite": "rom"
+      },
+      {
+        "duration_ms": 0,
+        "expected": "40 MHz",
+        "finding": null,
+        "name": "crystal",
+        "read": "40 MHz",
+        "reason": null,
+        "state": "pass",
+        "suite": "rom"
+      },
+      {
+        "duration_ms": 11,
+        "expected": "e8:f6:0a:f7:ff:d4",
+        "finding": null,
+        "name": "mac-efuse-reg",
+        "read": "e8:f6:0a:f7:ff:d4",
+        "reason": null,
+        "state": "pass",
+        "suite": "rom"
+      },
+      {
+        "duration_ms": 2,
+        "expected": null,
+        "finding": null,
+        "name": "package",
+        "read": "package 0",
+        "reason": null,
+        "state": "pass",
+        "suite": "efuse"
+      },
+      {
+        "duration_ms": 0,
+        "expected": null,
+        "finding": null,
+        "name": "psram",
+        "read": "none in package",
+        "reason": null,
+        "state": "pass",
+        "suite": "efuse"
+      },
+      {
+        "duration_ms": 3,
+        "expected": null,
+        "finding": null,
+        "name": "embedded-flash",
+        "read": "none",
+        "reason": null,
+        "state": "pass",
+        "suite": "efuse"
+      },
+      {
+        "duration_ms": 40,
+        "expected": null,
+        "finding": null,
+        "name": "jedec-id",
+        "read": "0x684018",
+        "reason": null,
+        "state": "pass",
+        "suite": "flash"
+      },
+      {
+        "duration_ms": 0,
+        "expected": null,
+        "finding": null,
+        "name": "size",
+        "read": "16 MB",
+        "reason": null,
+        "state": "pass",
+        "suite": "flash"
+      }
+    ],
+    "tool": {
+      "name": "devkit-tester",
+      "version": "0.0.1"
+    }
+  }
+}

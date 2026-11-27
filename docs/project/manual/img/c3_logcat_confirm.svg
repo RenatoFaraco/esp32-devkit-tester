@@ -1,0 +1,156 @@
+<svg class="rich-terminal" viewBox="0 0 994 636" xmlns="http://www.w3.org/2000/svg">
+    <!-- esp32-devkit-tester 0.0.1: session c3_logcat (2026-11-27T23:00:12Z), drawn by examples/manual_screenshots.rs -->
+    <style>
+
+    @font-face {
+        font-family: "Fira Code";
+        src: local("FiraCode-Regular"),
+                url("https://cdnjs.cloudflare.com/ajax/libs/firacode/6.2.0/woff2/FiraCode-Regular.woff2") format("woff2"),
+                url("https://cdnjs.cloudflare.com/ajax/libs/firacode/6.2.0/woff/FiraCode-Regular.woff") format("woff");
+        font-style: normal;
+        font-weight: 400;
+    }
+    @font-face {
+        font-family: "Fira Code";
+        src: local("FiraCode-Bold"),
+                url("https://cdnjs.cloudflare.com/ajax/libs/firacode/6.2.0/woff2/FiraCode-Bold.woff2") format("woff2"),
+                url("https://cdnjs.cloudflare.com/ajax/libs/firacode/6.2.0/woff/FiraCode-Bold.woff") format("woff");
+        font-style: bold;
+        font-weight: 700;
+    }
+
+    .dkt-matrix {
+        font-family: Fira Code, monospace;
+        font-size: 20px;
+        line-height: 24.4px;
+        font-variant-east-asian: full-width;
+    }
+
+    .dkt-title {
+        font-size: 18px;
+        font-weight: bold;
+        font-family: arial;
+    }
+
+    .dkt-r1 { fill: #e0e0e0;font-weight: bold }
+.dkt-r2 { fill: #8a8d8f }
+.dkt-r3 { fill: #58d1eb }
+.dkt-r4 { fill: #c5c8c6 }
+.dkt-r5 { fill: #fd971f }
+    </style>
+
+    <defs>
+    <clipPath id="dkt-clip-terminal">
+      <rect x="0" y="0" width="975" height="584.6" />
+    </clipPath>
+    <clipPath id="dkt-line-0">
+    <rect x="0" y="1.5" width="977" height="24.65"/>
+            </clipPath>
+    <clipPath id="dkt-line-1">
+    <rect x="0" y="25.9" width="977" height="24.65"/>
+            </clipPath>
+    <clipPath id="dkt-line-2">
+    <rect x="0" y="50.3" width="977" height="24.65"/>
+            </clipPath>
+    <clipPath id="dkt-line-3">
+    <rect x="0" y="74.7" width="977" height="24.65"/>
+            </clipPath>
+    <clipPath id="dkt-line-4">
+    <rect x="0" y="99.1" width="977" height="24.65"/>
+            </clipPath>
+    <clipPath id="dkt-line-5">
+    <rect x="0" y="123.5" width="977" height="24.65"/>
+            </clipPath>
+    <clipPath id="dkt-line-6">
+    <rect x="0" y="147.9" width="977" height="24.65"/>
+            </clipPath>
+    <clipPath id="dkt-line-7">
+    <rect x="0" y="172.3" width="977" height="24.65"/>
+            </clipPath>
+    <clipPath id="dkt-line-8">
+    <rect x="0" y="196.7" width="977" height="24.65"/>
+            </clipPath>
+    <clipPath id="dkt-line-9">
+    <rect x="0" y="221.1" width="977" height="24.65"/>
+            </clipPath>
+    <clipPath id="dkt-line-10">
+    <rect x="0" y="245.5" width="977" height="24.65"/>
+            </clipPath>
+    <clipPath id="dkt-line-11">
+    <rect x="0" y="269.9" width="977" height="24.65"/>
+            </clipPath>
+    <clipPath id="dkt-line-12">
+    <rect x="0" y="294.3" width="977" height="24.65"/>
+            </clipPath>
+    <clipPath id="dkt-line-13">
+    <rect x="0" y="318.7" width="977" height="24.65"/>
+            </clipPath>
+    <clipPath id="dkt-line-14">
+    <rect x="0" y="343.1" width="977" height="24.65"/>
+            </clipPath>
+    <clipPath id="dkt-line-15">
+    <rect x="0" y="367.5" width="977" height="24.65"/>
+            </clipPath>
+    <clipPath id="dkt-line-16">
+    <rect x="0" y="391.9" width="977" height="24.65"/>
+            </clipPath>
+    <clipPath id="dkt-line-17">
+    <rect x="0" y="416.3" width="977" height="24.65"/>
+            </clipPath>
+    <clipPath id="dkt-line-18">
+    <rect x="0" y="440.7" width="977" height="24.65"/>
+            </clipPath>
+    <clipPath id="dkt-line-19">
+    <rect x="0" y="465.1" width="977" height="24.65"/>
+            </clipPath>
+    <clipPath id="dkt-line-20">
+    <rect x="0" y="489.5" width="977" height="24.65"/>
+            </clipPath>
+    <clipPath id="dkt-line-21">
+    <rect x="0" y="513.9" width="977" height="24.65"/>
+            </clipPath>
+    <clipPath id="dkt-line-22">
+    <rect x="0" y="538.3" width="977" height="24.65"/>
+            </clipPath>
+    <clipPath id="dkt-line-23">
+    <rect x="0" y="562.7" width="977" height="24.65"/>
+            </clipPath>
+    </defs>
+
+    <rect fill="#292929" stroke="rgba(255,255,255,0.35)" stroke-width="1" x="1" y="1" width="992" height="634" rx="8"/><text class="dkt-title" fill="#c5c8c6" text-anchor="middle" x="497" y="27">devkit-tester</text>
+            <g transform="translate(26,22)">
+            <circle cx="0" cy="0" r="7" fill="#ff5f57"/>
+            <circle cx="22" cy="0" r="7" fill="#febc2e"/>
+            <circle cx="44" cy="0" r="7" fill="#28c840"/>
+            </g>
+
+    <g transform="translate(9, 41)" clip-path="url(#dkt-clip-terminal)">
+    
+    <g class="dkt-matrix">
+    <text class="dkt-r1" x="0" y="20" textLength="244" clip-path="url(#dkt-line-0)">&#160;esp32-devkit-tester</text><text class="dkt-r2" x="890.6" y="20" textLength="73.2" clip-path="url(#dkt-line-0)">v0.0.1</text>
+<text class="dkt-r2" x="0" y="44.4" textLength="963.8" clip-path="url(#dkt-line-1)">&#160;──────────────────────────────────────────────────────────────────────────────</text>
+<text class="dkt-r1" x="0" y="68.8" textLength="85.4" clip-path="url(#dkt-line-2)">&#160;Boards</text>
+<text class="dkt-r3" x="0" y="93.2" textLength="61" clip-path="url(#dkt-line-3)">&#160;▸&#160;●&#160;</text><text class="dkt-r1" x="61" y="93.2" textLength="122" clip-path="url(#dkt-line-3)">ESP32-??&#160;&#160;</text><text class="dkt-r4" x="183" y="93.2" textLength="219.6" clip-path="url(#dkt-line-3)">&#160;80:53:e0:0a:5d:ac</text><text class="dkt-r2" x="402.6" y="93.2" textLength="170.8" clip-path="url(#dkt-line-3)">&#160;&#160;unknown&#160;chip</text>
+<text class="dkt-r2" x="0" y="117.6" textLength="122" clip-path="url(#dkt-line-4)">&#160;&#160;&#160;&#160;&#160;&#160;&#160;└─&#160;</text><text class="dkt-r4" x="122" y="117.6" textLength="402.6" clip-path="url(#dkt-line-4)">COM6&#160;&#160;&#160;USB-Serial/JTAG&#160;&#160;native&#160;&#160;&#160;</text><text class="dkt-r1" x="524.6" y="117.6" textLength="85.4" clip-path="url(#dkt-line-4)">primary</text>
+
+<text class="dkt-r1" x="0" y="166.4" textLength="231.8" clip-path="url(#dkt-line-6)">&#160;Not&#160;identified&#160;yet</text>
+<text class="dkt-r5" x="36.6" y="190.8" textLength="12.2" clip-path="url(#dkt-line-7)">?</text><text class="dkt-r4" x="48.8" y="190.8" textLength="927.2" clip-path="url(#dkt-line-7)">&#160;COM5&#160;&#160;&#160;CH340K&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;bridge&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
+<text class="dkt-r4" x="0" y="215.2" textLength="976" clip-path="url(#dkt-line-8)">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;┌&#160;Identify&#160;bridges&#160;────────────────────────────────┐&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
+<text class="dkt-r4" x="0" y="239.6" textLength="976" clip-path="url(#dkt-line-9)">&#160;1&#160;board&#160;·&#160;2&#160;p│&#160;1&#160;bridge&#160;port&#160;is&#160;not&#160;identified&#160;yet.&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;│&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
+<text class="dkt-r4" x="0" y="264" textLength="976" clip-path="url(#dkt-line-10)">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;│&#160;To&#160;read&#160;its&#160;MAC&#160;the&#160;board&#160;is&#160;reset&#160;into&#160;the&#160;ROM&#160;&#160;│&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
+<text class="dkt-r4" x="0" y="288.4" textLength="976" clip-path="url(#dkt-line-11)">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;│&#160;and&#160;then&#160;back&#160;to&#160;its&#160;app.&#160;Nothing&#160;is&#160;written.&#160;&#160;&#160;&#160;│&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
+<text class="dkt-r4" x="0" y="312.8" textLength="976" clip-path="url(#dkt-line-12)">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;│&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;│&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
+<text class="dkt-r4" x="0" y="337.2" textLength="317.2" clip-path="url(#dkt-line-13)">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;│&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="dkt-r1" x="317.2" y="337.2" textLength="12.2" clip-path="url(#dkt-line-13)">y</text><text class="dkt-r4" x="329.4" y="337.2" textLength="231.8" clip-path="url(#dkt-line-13)">&#160;identify&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="dkt-r1" x="561.2" y="337.2" textLength="12.2" clip-path="url(#dkt-line-13)">n</text><text class="dkt-r4" x="573.4" y="337.2" textLength="402.6" clip-path="url(#dkt-line-13)">&#160;skip&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;│&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
+<text class="dkt-r4" x="0" y="361.6" textLength="976" clip-path="url(#dkt-line-14)">&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;└──────────────────────────────────────────────────┘&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
+
+
+
+
+
+
+
+<text class="dkt-r2" x="0" y="556.8" textLength="963.8" clip-path="url(#dkt-line-22)">&#160;──────────────────────────────────────────────────────────────────────────────</text>
+<text class="dkt-r1" x="12.2" y="581.2" textLength="12.2" clip-path="url(#dkt-line-23)">y</text><text class="dkt-r2" x="24.4" y="581.2" textLength="109.8" clip-path="url(#dkt-line-23)">&#160;identify</text><text class="dkt-r1" x="170.8" y="581.2" textLength="12.2" clip-path="url(#dkt-line-23)">n</text><text class="dkt-r2" x="183" y="581.2" textLength="61" clip-path="url(#dkt-line-23)">&#160;skip</text>
+    </g>
+    </g>
+</svg>
