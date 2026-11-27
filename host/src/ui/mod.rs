@@ -16,12 +16,18 @@
 //!   that is still not identified.
 //! - `Running`: `q`/`Esc`/`Ctrl+C` ask to cancel (the board still gets its hard reset); a
 //!   second `Ctrl+C` while cancelling quits at once.
-//! - `Done`: `enter` back to the list, `q` quits.
+//! - `Done`: `tab` switches between the **Report** (what passed or failed) and the **Board**
+//!   panel (what board this is: the chip table merged with what was read, H7), named as tabs in
+//!   the header; `enter` back to the list, `q` quits. Every run opens on Report. `tab` does
+//!   nothing on `Running`: the panel is built from the finished report, and half a panel would
+//!   show `—` for values that are only not read *yet*.
 //!
-//! On `Running` and `Done` the report body scrolls (`↑↓`/`j k` a line, `PgUp`/`PgDn` a page,
-//! `Home`/`End`) between the fixed header and footer; `Done` also keeps its summary fixed. The
-//! layout itself lives in [`report_view`]. [`App::resize`] tells the state the terminal size so
-//! that the keys clamp against what is actually on screen.
+//! On `Running` and `Done` the body scrolls (`↑↓`/`j k` a line, `PgUp`/`PgDn` a page,
+//! `Home`/`End`) between the fixed header and footer; `Done` also keeps its summary fixed under
+//! both tabs. Each tab of `Done` keeps its own scroll position, so going to Board and back
+//! leaves the report where it was; a new run starts both at the top. The layouts live in
+//! [`report_view`] and [`board_view`]. [`App::resize`] tells the state the terminal size so that
+//! the keys clamp against what is actually on screen.
 //!
 //! # Loop
 //! [`run`] starts the threads, then `crossterm::event::poll` with a short timeout, drains the
@@ -47,6 +53,7 @@ use crate::runner::worker::{Event, Job, Worker, silence_shielded_panics};
 use crate::runner::{self, Board, Grouping, Identified};
 use crate::transport::{self, Mac, PortClass, PortDesc};
 
+mod board_view;
 mod report_view;
 
 use report_view::{Scroll, ScrollState};
@@ -112,8 +119,10 @@ pub struct App {
     selected: Option<Mac>,
     screen: Screen,
     tick: usize,
-    /// Scroll position of the report body (`Running` and `Done`).
+    /// Scroll position of the report body (`Running`, and the Report tab of `Done`).
     scroll: ScrollState,
+    /// Scroll position of the Board tab of `Done`.
+    board_scroll: ScrollState,
     /// Terminal size (columns, rows) as last drawn; the scroll keys clamp against it.
     size: (u16, u16),
 }
@@ -133,7 +142,44 @@ enum Screen {
     Done {
         board: Board,
         report: Report,
+        tab: Tab,
     },
+}
+
+/// The two views of a finished run, switched with `tab`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum Tab {
+    /// The Jest-style report.
+    #[default]
+    Report,
+    /// The Board panel.
+    Board,
+}
+
+impl Tab {
+    /// The tab `tab` goes to.
+    fn other(self) -> Tab {
+        match self {
+            Tab::Report => Tab::Board,
+            Tab::Board => Tab::Report,
+        }
+    }
+
+    /// The name in the header (`Report`, `Board`).
+    fn name(self) -> &'static str {
+        match self {
+            Tab::Report => "Report",
+            Tab::Board => "Board",
+        }
+    }
+
+    /// The footer hint for going to this tab (`tab board`).
+    fn hint(self) -> &'static str {
+        match self {
+            Tab::Report => "report",
+            Tab::Board => "board",
+        }
+    }
 }
 
 /// A run in progress, as far as the events told.
@@ -179,6 +225,7 @@ impl App {
             screen: Screen::List,
             tick: 0,
             scroll: ScrollState::top(),
+            board_scroll: ScrollState::top(),
             size: DEFAULT_SIZE,
         }
     }
@@ -193,29 +240,49 @@ impl App {
         self.size = (width, height);
     }
 
-    /// The report body of the current screen laid out for `width`, and the fixed summary under
-    /// it (`Done` only); `None` on the screens that do not show a report.
+    /// The scrolling body of the current screen laid out for `width` (the report, or the Board
+    /// panel on that tab of `Done`), and the fixed summary under it (`Done` only); `None` on the
+    /// screens that do not show a run.
     fn report_body(&self, width: u16) -> Option<(Vec<Line<'static>>, Vec<Line<'static>>)> {
         match &self.screen {
             Screen::Running(live) => Some((
                 report_view::running_lines(live, self.spinner(), width),
                 Vec::new(),
             )),
-            Screen::Done { report, .. } => Some((
-                report_view::done_lines(report, width),
-                report_view::summary_lines(report, width),
-            )),
+            Screen::Done { board, report, tab } => {
+                let body = match tab {
+                    Tab::Report => report_view::done_lines(report, width),
+                    Tab::Board => board_view::board_lines(report, board, width),
+                };
+                Some((body, report_view::summary_lines(report, width)))
+            }
             _ => None,
         }
     }
 
-    /// Scrolls the report body by `step`, against the body as laid out for the last size.
+    /// The scroll position of the body on screen.
+    fn body_scroll(&self) -> &ScrollState {
+        match &self.screen {
+            Screen::Done {
+                tab: Tab::Board, ..
+            } => &self.board_scroll,
+            _ => &self.scroll,
+        }
+    }
+
+    /// Scrolls the body on screen by `step`, against the body as laid out for the last size.
     fn scroll_report(&mut self, step: Scroll) {
         let (width, height) = self.size;
         let page = Rect::new(0, 0, width.min(PAGE_WIDTH), height);
         if let Some((body, summary)) = self.report_body(page.width) {
             let viewport = usize::from(Areas::of(page, summary.len()).body.height);
-            self.scroll.apply(step, body.len(), viewport);
+            let scroll = match &self.screen {
+                Screen::Done {
+                    tab: Tab::Board, ..
+                } => &mut self.board_scroll,
+                _ => &mut self.scroll,
+            };
+            scroll.apply(step, body.len(), viewport);
         }
     }
 
@@ -327,6 +394,10 @@ impl App {
             Screen::Identifying { cancelling, .. } => cancel_key(cancelling, leave, ctrl_c),
             Screen::Running(live) => cancel_key(&mut live.cancelling, leave, ctrl_c),
             Screen::Done { .. } if ctrl_c || key.code == KeyCode::Char('q') => Action::Quit,
+            Screen::Done { tab, .. } if key.code == KeyCode::Tab => {
+                *tab = tab.other();
+                Action::None
+            }
             Screen::Done { .. } => {
                 if matches!(key.code, KeyCode::Enter | KeyCode::Esc) {
                     self.screen = Screen::List;
@@ -435,8 +506,13 @@ impl App {
                         self.chips.retain(|(mac, _)| *mac != board.mac());
                         self.chips.push((board.mac(), info.chip));
                     }
-                    self.screen = Screen::Done { board, report };
+                    self.screen = Screen::Done {
+                        board,
+                        report,
+                        tab: Tab::Report,
+                    };
                     self.scroll = ScrollState::top();
+                    self.board_scroll = ScrollState::top();
                 }
             }
             Event::RunCancelled => {
@@ -593,8 +669,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
     match (&app.screen, report) {
         (_, Some((body, summary))) => {
             let viewport = usize::from(areas.body.height);
-            let offset = app.scroll.offset(body.len(), viewport);
-            hidden = app.scroll.hidden(body.len(), viewport);
+            let scroll = app.body_scroll();
+            let offset = scroll.offset(body.len(), viewport);
+            hidden = scroll.hidden(body.len(), viewport);
             let shown: Vec<Line> = body.into_iter().skip(offset).take(viewport).collect();
             frame.render_widget(Paragraph::new(shown), areas.body);
             if !summary.is_empty() {
@@ -648,38 +725,81 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
                 width,
             )
         }
-        Screen::Done { board, report } => {
+        Screen::Done { board, report, tab } => {
             let chip = report.board().chip.as_ref().map(|info| info.chip);
             let verdict = if report.exit_code() == 0 {
                 Span::styled("PASS", green().add_modifier(Modifier::BOLD))
             } else {
                 Span::styled("FAIL", red().add_modifier(Modifier::BOLD))
             };
-            spread(board_title(board, chip), vec![verdict], width)
+            let mut right = vec![verdict, Span::raw("   ")];
+            right.extend(tab_spans(*tab));
+            // Too narrow for everything: the port names go first (the Board panel lists them),
+            // then the verdict (the summary under the body still says it).
+            let title = board_title(board, chip);
+            if fits(&title, &right, width) {
+                return spread(title, right, width);
+            }
+            let short = board_title_short(board, chip);
+            if fits(&short, &right, width) {
+                return spread(short, right, width);
+            }
+            spread(short, tab_spans(*tab), width)
         }
     }
 }
 
+/// `[Report]  Board`: the active tab bold in brackets, the other one gray.
+fn tab_spans(active: Tab) -> Vec<Span<'static>> {
+    let tab = |tab: Tab| {
+        if tab == active {
+            Span::styled(format!("[{}]", tab.name()), bold())
+        } else {
+            Span::styled(tab.name(), gray())
+        }
+    };
+    vec![tab(Tab::Report), Span::raw("  "), tab(Tab::Board)]
+}
+
+/// Whether `left` and `right` fit on one line of `width` cells as [`spread`] lays them out.
+fn fits(left: &[Span], right: &[Span], width: u16) -> bool {
+    let used: usize = left.iter().chain(right).map(Span::width).sum();
+    used + 2 <= usize::from(width)
+}
+
 /// ` ESP32-C6  ·  e8:f6:0a:f7:ff:d4  ·  COM13 + COM11`
 fn board_title(board: &Board, chip: Option<Chip>) -> Vec<Span<'static>> {
-    let name = chip.map_or(UNKNOWN_CHIP, |chip| chip.caps().name);
     let ports: Vec<String> = board
         .ports()
         .map(|port| safe(&port.name).to_string())
         .collect();
+    let mut spans = board_title_short(board, chip);
+    spans.push(Span::styled("  ·  ", gray()));
+    spans.push(Span::raw(ports.join(" + ")));
+    spans
+}
+
+/// ` ESP32-C6  ·  e8:f6:0a:f7:ff:d4`
+fn board_title_short(board: &Board, chip: Option<Chip>) -> Vec<Span<'static>> {
+    let name = chip.map_or(UNKNOWN_CHIP, |chip| chip.caps().name);
     vec![
         Span::styled(format!(" {name}"), bold()),
         Span::styled("  ·  ", gray()),
         Span::raw(board.mac().to_string()),
-        Span::styled("  ·  ", gray()),
-        Span::raw(ports.join(" + ")),
     ]
 }
 
 /// The key hints and, on the report screens, `↑ N`/`↓ N more` at the right end for the body
-/// lines `hidden` above and below the viewport (`↑↓ scroll` is listed only then).
+/// lines `hidden` above and below the viewport (`↑↓ scroll` is listed only then). On `Done` the
+/// first hint is the tab `tab` goes to (`tab board`), then `↑↓ scroll`; when the line is too
+/// narrow, `enter back to boards` becomes `enter back`.
 fn footer_line(app: &App, width: u16, hidden: (usize, usize)) -> Line<'static> {
     let scrollable = hidden.0 + hidden.1 > 0;
+    let more = if scrollable {
+        report_view::more_indicator(hidden.0, hidden.1)
+    } else {
+        Vec::new()
+    };
     let mut keys: Vec<(&str, &str)> = match &app.screen {
         Screen::List => {
             let mut keys = Vec::new();
@@ -707,27 +827,42 @@ fn footer_line(app: &App, width: u16, hidden: (usize, usize)) -> Line<'static> {
             }
             vec![("q", "cancel")]
         }
-        Screen::Done { .. } => vec![("enter", "back to boards"), ("q", "quit")],
+        Screen::Done { tab, .. } => {
+            vec![
+                ("tab", tab.other().hint()),
+                ("enter", "back to boards"),
+                ("q", "quit"),
+            ]
+        }
     };
     if scrollable {
-        keys.insert(0, ("↑↓", "scroll"));
+        let at = usize::from(matches!(app.screen, Screen::Done { .. }));
+        keys.insert(at, ("↑↓", "scroll"));
     }
-    let mut spans = vec![Span::raw(" ")];
-    for (index, (key, label)) in keys.into_iter().enumerate() {
-        if index > 0 {
-            spans.push(Span::raw("   "));
-        }
-        spans.push(Span::styled(key, bold()));
-        spans.push(Span::styled(format!(" {label}"), gray()));
+    let mut spans = key_spans(&keys);
+    if !fits(&spans, &more, width)
+        && let Some(back) = keys.iter_mut().find(|(key, _)| *key == "enter")
+    {
+        back.1 = "back";
+        spans = key_spans(&keys);
     }
     if !scrollable {
         return Line::from(spans);
     }
-    spread(
-        spans,
-        report_view::more_indicator(hidden.0, hidden.1),
-        width,
-    )
+    spread(spans, more, width)
+}
+
+/// ` key label   key label`: keys bold, labels gray.
+fn key_spans(keys: &[(&str, &str)]) -> Vec<Span<'static>> {
+    let mut spans = vec![Span::raw(" ")];
+    for (index, (key, label)) in keys.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw("   "));
+        }
+        spans.push(Span::styled((*key).to_owned(), bold()));
+        spans.push(Span::styled(format!(" {label}"), gray()));
+    }
+    spans
 }
 
 /// Model and kind of a port, as in the list (`CH343` / `bridge`, `USB-Serial/JTAG` / `native`).

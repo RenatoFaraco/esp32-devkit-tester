@@ -61,7 +61,7 @@ pub(super) fn wrap(text: &str, width: usize, indent: usize) -> Vec<String> {
 
 /// The styled core of [`wrap`]: lays `words` out in rows of at most `room` columns, one space
 /// between words, each word keeping its style.
-fn wrap_words<'w>(
+pub(super) fn wrap_words<'w>(
     words: impl IntoIterator<Item = (&'w str, Style)>,
     room: usize,
 ) -> Vec<Vec<Span<'static>>> {
@@ -103,7 +103,7 @@ fn wrap_words<'w>(
 }
 
 /// `text` in at most `max` columns: as is when it fits, else cut with `…` as its last column.
-fn fit(text: &str, max: usize) -> String {
+pub(super) fn fit(text: &str, max: usize) -> String {
     if text.chars().count() <= max {
         return text.to_owned();
     }

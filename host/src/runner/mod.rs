@@ -45,7 +45,7 @@ use std::fmt;
 use std::time::{Duration, Instant};
 
 use crate::chips::{ChipCaps, mhz_text};
-use crate::probe::{EmbeddedMem, Probe, ProbeError};
+use crate::probe::{EmbeddedMem, Probe, ProbeError, Revision};
 use crate::report::{Outcome, Run, SafeText, State, Suite, TestId, TestResult};
 use crate::transport::{Mac, PortClass, PortDesc, classify};
 
@@ -312,6 +312,10 @@ pub const BOARD_TESTS: [TestId; 9] = [
     FLASH_SIZE,
 ];
 
+/// Value read by `efuse/embedded-flash` when the package has no flash: the flash is external
+/// (spec §4). The Board panel tells the two cases apart by it.
+pub const NO_EMBEDDED_FLASH: &str = "none";
+
 /// FAIL reason of `flash/jedec-id` when nothing drove the bus (spec §4).
 pub const FAIL_BLANK_FLASH: &str = "no flash answered RDID (0x000000/0xFFFFFF)";
 
@@ -384,6 +388,33 @@ pub fn run_suites(
     run: &mut Run,
     observer: &mut dyn FnMut(Progress),
 ) -> Result<(), Interrupted> {
+    run_suites_noting(
+        probe,
+        caps,
+        clock,
+        run,
+        observer,
+        &mut SuiteFacts::default(),
+    )
+}
+
+/// Facts read by the board suites that the report keeps outside the test results too
+/// (`board.chip.revision`, spec §3.2). Noted while the suites run, so nothing is read twice.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct SuiteFacts {
+    /// The silicon revision, when `rom/revision` read it.
+    pub(crate) revision: Option<Revision>,
+}
+
+/// [`run_suites`], noting in `facts` what the report also needs outside the tests.
+pub(crate) fn run_suites_noting(
+    probe: &mut dyn Probe,
+    caps: &ChipCaps,
+    clock: &dyn Clock,
+    run: &mut Run,
+    observer: &mut dyn FnMut(Progress),
+    facts: &mut SuiteFacts,
+) -> Result<(), Interrupted> {
     let mut session = Session {
         probe,
         clock,
@@ -406,6 +437,7 @@ pub fn run_suites(
         session.read(REVISION, "revision read", |probe| probe.revision())?
     {
         let read = SafeText::from_host(&revision.to_string());
+        facts.revision = Some(revision);
         session.record(REVISION, Outcome::pass(ms, None, Some(read)));
     }
 
@@ -456,7 +488,7 @@ pub fn run_suites(
         })?
     {
         let read = match flash {
-            None => SafeText::from_host("none"),
+            None => SafeText::from_host(NO_EMBEDDED_FLASH),
             Some(mem) => SafeText::from_board(&format!("{}{}", size_of(&mem), vendor_of(&mem))),
         };
         session.record(EMBEDDED_FLASH, Outcome::pass(ms, None, Some(read)));
