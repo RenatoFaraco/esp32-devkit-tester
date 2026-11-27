@@ -99,6 +99,65 @@ fn detect_os() -> Platform {
     Platform::Other
 }
 
+/// Why the host refuses to start under WSL1 (ADR-007), printed on stderr with exit code 2.
+pub const WSL1_UNSUPPORTED: &str = "WSL1 is not supported: it has no USB/serial devices. Use Windows natively, or WSL2 with usbipd-win.";
+
+/// Whether the host may run on `platform` at all, decided before any port is listed or opened.
+///
+/// Pure, so the refusal is tested without WSL. Only WSL1 is refused: it has no USB or serial
+/// devices, so every port would look absent and the user would get "no board" instead of the
+/// real cause. [`Platform::Other`] is allowed: `serialport` may still work there.
+pub fn startup_check(platform: Platform) -> Result<(), String> {
+    match platform {
+        Platform::Wsl(Wsl::V1) => Err(WSL1_UNSUPPORTED.to_owned()),
+        Platform::Windows | Platform::Linux | Platform::Wsl(Wsl::V2) | Platform::MacOs => Ok(()),
+        Platform::Other => Ok(()),
+    }
+}
+
+/// Whether a terminal on this OS shows UTF-8 text (the report's `✓ ✕ ○ ─ └` glyphs) as such.
+/// The caller asks only for a stream that *is* a terminal; a pipe or file always gets ASCII.
+///
+/// - **Windows:** yes. When stdout/stderr is a console, Rust's standard library writes it with
+///   `WriteConsoleW` (UTF-16), so the console code page does not matter: Windows Terminal, the
+///   VS Code terminal and the classic console all receive the right characters. (Redirected
+///   output is raw UTF-8 bytes that Windows PowerShell 5.1 decodes with the OEM code page, hence
+///   ASCII there.)
+/// - **Elsewhere:** the locale decides, as for any POSIX program ([`locale_is_utf8`] with
+///   `LC_ALL`, `LC_CTYPE` and `LANG`).
+pub fn terminal_is_utf8() -> bool {
+    terminal_is_utf8_os()
+}
+
+#[cfg(windows)]
+fn terminal_is_utf8_os() -> bool {
+    true
+}
+
+#[cfg(not(windows))]
+fn terminal_is_utf8_os() -> bool {
+    let var = |name: &str| std::env::var(name).ok();
+    locale_is_utf8(
+        var("LC_ALL").as_deref(),
+        var("LC_CTYPE").as_deref(),
+        var("LANG").as_deref(),
+    )
+}
+
+/// The POSIX rule for the character set: the first of `LC_ALL`, `LC_CTYPE`, `LANG` that is set
+/// and not empty wins, and it is UTF-8 when its codeset says so (`en_US.UTF-8`, `C.utf8`). No
+/// locale at all is the `C` locale: ASCII. Pure, so it is tested on every OS.
+pub fn locale_is_utf8(lc_all: Option<&str>, lc_ctype: Option<&str>, lang: Option<&str>) -> bool {
+    [lc_all, lc_ctype, lang]
+        .into_iter()
+        .flatten()
+        .find(|value| !value.is_empty())
+        .is_some_and(|locale| {
+            let locale = locale.to_ascii_lowercase();
+            locale.contains("utf-8") || locale.contains("utf8")
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,5 +224,38 @@ mod tests {
         } else if cfg!(target_os = "linux") {
             assert!(matches!(platform, Platform::Linux | Platform::Wsl(_)));
         }
+    }
+
+    #[test]
+    fn wsl1_is_refused_before_any_port_is_opened() {
+        // The refusal is decided from the platform alone; `ui::cli` checks it before listing
+        // ports (its own test proves no port is touched).
+        assert_eq!(
+            startup_check(Platform::Wsl(Wsl::V1)),
+            Err(WSL1_UNSUPPORTED.to_owned())
+        );
+        assert!(WSL1_UNSUPPORTED.starts_with("WSL1 is not supported: it has no USB/serial"));
+        assert!(WSL1_UNSUPPORTED.ends_with("or WSL2 with usbipd-win."));
+        assert!(!WSL1_UNSUPPORTED.contains("  "), "{WSL1_UNSUPPORTED}");
+        for platform in [
+            Platform::Windows,
+            Platform::Linux,
+            Platform::Wsl(Wsl::V2),
+            Platform::MacOs,
+            Platform::Other,
+        ] {
+            assert_eq!(startup_check(platform), Ok(()), "{platform:?}");
+        }
+    }
+
+    #[test]
+    fn locale_decides_utf8_outside_windows() {
+        assert!(locale_is_utf8(None, None, Some("en_US.UTF-8")));
+        assert!(locale_is_utf8(None, Some("C.utf8"), Some("C")));
+        // LC_ALL wins over the others; an empty value is skipped.
+        assert!(!locale_is_utf8(Some("C"), Some("en_US.UTF-8"), None));
+        assert!(locale_is_utf8(Some(""), None, Some("pt_BR.UTF-8")));
+        assert!(!locale_is_utf8(None, None, Some("pt_BR.ISO-8859-1")));
+        assert!(!locale_is_utf8(None, None, None));
     }
 }

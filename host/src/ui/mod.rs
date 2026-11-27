@@ -54,6 +54,7 @@ use crate::runner::{self, Board, Grouping, Identified};
 use crate::transport::{self, Mac, PortClass, PortDesc};
 
 mod board_view;
+pub mod cli;
 mod report_view;
 
 use report_view::{Scroll, ScrollState};
@@ -416,7 +417,9 @@ impl App {
                     let next = if up {
                         index.saturating_sub(1)
                     } else {
-                        (index + 1).min(boards.len() - 1)
+                        // `selected_index` is `Some` only for a non-empty list, so `len() - 1`
+                        // cannot underflow.
+                        (index + 1).min(boards.len().saturating_sub(1))
                     };
                     self.selected = boards.get(next).map(Board::mac);
                 }
@@ -515,7 +518,7 @@ impl App {
                     self.board_scroll = ScrollState::top();
                 }
             }
-            Event::RunCancelled => {
+            Event::RunCancelled(_) => {
                 if matches!(self.screen, Screen::Running(_)) {
                     self.screen = Screen::List;
                 }
@@ -598,6 +601,14 @@ fn spread<'a>(mut left: Vec<Span<'a>>, right: Vec<Span<'a>>, width: u16) -> Line
     Line::from(left)
 }
 
+/// ` ────…`: the gray rule between the parts of a page, one cell of margin on each side.
+fn rule(width: u16) -> Line<'static> {
+    Line::styled(
+        format!(" {}", "─".repeat(usize::from(width.saturating_sub(2)))),
+        gray(),
+    )
+}
+
 /// The rows of a page, top to bottom. The summary and the rule above it are zero rows high on
 /// every screen but `Done`.
 struct Areas {
@@ -657,10 +668,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let summary_len = report.as_ref().map_or(0, |(_, summary)| summary.len());
     let areas = Areas::of(page, summary_len);
 
-    let rule = Line::styled(
-        format!(" {}", "─".repeat(usize::from(page.width.saturating_sub(2)))),
-        gray(),
-    );
+    let rule = rule(page.width);
     frame.render_widget(Paragraph::new(header_line(app, page.width)), areas.header);
     frame.render_widget(Paragraph::new(rule.clone()), areas.top_rule);
     frame.render_widget(Paragraph::new(rule.clone()), areas.bottom_rule);
@@ -1142,8 +1150,8 @@ fn event_loop(
     }
 }
 
-/// Gets stdout ready for ANSI colour sequences printed as plain text (bench examples now,
-/// `--no-tui` later). On Windows, crossterm turns on virtual terminal processing for the console
+/// Gets stdout ready for ANSI colour sequences printed as plain text (bench examples and the
+/// `--no-tui` text). On Windows, crossterm turns on virtual terminal processing for the console
 /// the first time it styles output, so the sequences are interpreted instead of shown; elsewhere
 /// this only writes a colour reset. Call it only when stdout is a terminal. Returns false if
 /// stdout could not be written.
