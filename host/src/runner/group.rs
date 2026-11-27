@@ -25,14 +25,14 @@
 use std::time::Duration;
 
 use super::{
-    BOARD_TESTS, Clock, PortSync, Progress, Sleeper, SyncError, UART_BRIDGE, USB_SERIAL_JTAG,
-    catalog, port_tests, run_suites, sync_port,
+    BOARD_TESTS, Clock, PortSync, Progress, Sleeper, SuiteFacts, SyncError, UART_BRIDGE,
+    USB_SERIAL_JTAG, catalog, port_tests, run_suites_noting, sync_port,
 };
 use crate::chips::{Chip, ChipCaps};
 use crate::probe::{Probe, ProbeError};
 use crate::report::{
-    BoardInfo, ChipInfo, HardReset, Outcome, PortInfo, PortKind, Report, Run, SafeText, TestId,
-    TestResult,
+    BoardInfo, ChipInfo, HardReset, Outcome, PortInfo, PortKind, Report, Revision, Run, SafeText,
+    TestId, TestResult,
 };
 use crate::transport::{Mac, PortClass, PortDesc, classify, trusted_serial};
 
@@ -333,8 +333,9 @@ pub fn port_info(port: &PortDesc, primary: bool) -> Option<PortInfo> {
 
 /// Runs the v0.1 catalog on `board`, port by port, and returns the complete report.
 ///
-/// 1. Primary port: [`sync_port`] and the chip read, then [`run_suites`] on that session, then
-///    the hard reset. If the sync (or the chip read) fails, the board suites are SKIP
+/// 1. Primary port: [`sync_port`] and the chip read, then [`run_suites`](super::run_suites) on
+///    that session (the revision it reads also goes to `board.chip.revision`), then the hard
+///    reset. If the sync (or the chip read) fails, the board suites are SKIP
 ///    `not run: <primary port test> failed`, and the other ports are still tried.
 /// 2. Each other port: a native port is first looked for again by USB serial number in
 ///    `enumerate()` (it re-enumerates after every hard reset); if it is not back within
@@ -444,11 +445,20 @@ pub fn run_board(
     }
 
     let caps = chip.map(Chip::caps);
+    let (suites, facts) = match suites {
+        Some((tests, facts)) => (Some(tests), facts),
+        None => (None, SuiteFacts::default()),
+    };
+    // The probe fact becomes the model's own type here: `report` does not know `probe`.
+    let revision = facts.revision.map(|read| Revision {
+        major: read.major,
+        minor: read.minor,
+    });
     let info = BoardInfo {
         chip: chip.map(|chip| ChipInfo {
             chip,
             description: None,
-            revision: None,
+            revision,
         }),
         mac: Some(SafeText::from_host(&board.mac().to_string())),
         ports: board.port_infos(),
@@ -515,13 +525,14 @@ fn sync_session(
 }
 
 /// The board suites on an open session, in a run of their own: an aborted session stops the
-/// suites (`not run`) but never the port tests of the other ports.
+/// suites (`not run`) but never the port tests of the other ports. Also returns the facts the
+/// suites noted for the board (the revision), kept even when the session was aborted later.
 fn board_suites(
     probe: &mut dyn Probe,
     caps: &ChipCaps,
     clock: &dyn Clock,
     observer: &mut dyn FnMut(Progress),
-) -> Vec<TestResult> {
+) -> (Vec<TestResult>, SuiteFacts) {
     let board = BoardInfo {
         chip: None,
         mac: None,
@@ -529,8 +540,9 @@ fn board_suites(
     };
     let mut run = Run::new(env!("CARGO_PKG_VERSION"), board, BOARD_TESTS.to_vec());
     // An interruption is already recorded in `run` (abort); the caller does the hard reset.
-    let _interrupted = run_suites(probe, caps, clock, &mut run, observer);
-    run.complete(HardReset::done()).tests().to_vec()
+    let mut facts = SuiteFacts::default();
+    let _interrupted = run_suites_noting(probe, caps, clock, &mut run, observer, &mut facts);
+    (run.complete(HardReset::done()).tests().to_vec(), facts)
 }
 
 /// The board's state after a session's hard reset. A session that never opened (the port was
@@ -1351,5 +1363,64 @@ mod tests {
             report.summary().to_string(),
             "Tests: 1 failed, 0 passed, 10 skipped, 11 total"
         );
+    }
+
+    #[test]
+    fn report_board_info_has_revision() {
+        let s3 = || {
+            Board::new(
+                mac("10:51:db:84:14:0c"),
+                Some(chip("esp32s3")),
+                vec![ch343("COM12")],
+            )
+            .unwrap()
+        };
+        let run = |probe: FakeProbe| {
+            let bench = Bench::new(&[("COM12", probe)]);
+            let time = FakeTime::default();
+            run_board(
+                &mut bench.factory(),
+                &s3(),
+                &time,
+                &time,
+                &mut script(vec![vec![ch343("COM12")]]),
+                &mut |_| {},
+            )
+        };
+        let revision = |report: &Report| {
+            report
+                .board()
+                .chip
+                .as_ref()
+                .and_then(|info| info.revision)
+                .map(|revision| (revision.major, revision.minor))
+        };
+
+        // Read once by `rom/revision`: the same fact in the test and in `board.chip`.
+        let report = run(fake("esp32s3"));
+        assert_eq!(revision(&report), Some((0, 2)));
+        assert_eq!(
+            outcome(&report, crate::runner::REVISION)
+                .read()
+                .map(SafeText::as_str),
+            Some("v0.2")
+        );
+        // The probe has no description fact yet.
+        assert_eq!(
+            report.board().chip.as_ref().map(|info| &info.description),
+            Some(&None)
+        );
+
+        // Not read: the chip is still known, the revision is not made up.
+        let failing = fake("esp32s3").fail_at(Step::Revision, ProbeError::Protocol("bad".into()));
+        let report = run(failing);
+        assert_eq!(
+            report.board().chip.as_ref().map(|info| info.chip),
+            Some(chip("esp32s3"))
+        );
+        assert_eq!(revision(&report), None);
+        // An aborted session after the revision read keeps it.
+        let report = run(fake("esp32s3").fail_at(Step::FlashId, ProbeError::Timeout));
+        assert_eq!(revision(&report), Some((0, 2)));
     }
 }

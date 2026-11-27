@@ -8,6 +8,8 @@ use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::KeyEventState;
 
 use super::*;
+use crate::probe::Probe;
+use crate::probe::fake::{FakeProbe, Step};
 use crate::report::{BoardInfo, ChipInfo, HardReset, Outcome, Revision, Run, State};
 use crate::runner::worker::testing::{
     C6_MAC, Log, TestTime, c6_enumerate, c6_probes, ch343, collect_until, gate, native, usb,
@@ -582,7 +584,8 @@ fn done_screen_snapshot() {
     start_run(&mut app);
     app.on_event(Event::RunFinished(c6_report()));
     let lines = screen_lines(&app);
-    assert!(lines[0].ends_with("PASS"), "{}", lines[0]);
+    // The verdict, then the tabs: the run opens on Report.
+    assert!(lines[0].ends_with("PASS   [Report]  Board"), "{}", lines[0]);
     let text = lines.join("\n");
     for id in BOARD_TESTS {
         assert!(text.contains(&format!("✓ {:<20}", id.name)), "{id}\n{text}");
@@ -602,7 +605,7 @@ fn done_screen_snapshot() {
     assert_eq!(lines[21], " ✓ board back to its app");
     assert!(lines[22].starts_with(" ───"), "{}", lines[22]);
     assert!(lines.iter().all(|line| line.chars().count() < 80));
-    assert_eq!(lines[23], " enter back to boards   q quit");
+    assert_eq!(lines[23], " tab board   enter back to boards   q quit");
 }
 
 // ---- the loop never waits on the board ----
@@ -738,7 +741,11 @@ fn done_app(report: Report, width: u16, height: u16) -> App {
     let board = Board::new(mac(ESP32_MAC), Some(chip("esp32")), vec![cp210x("COM9")]).unwrap();
     let mut app = App::new();
     app.resize(width, height);
-    app.screen = Screen::Done { board, report };
+    app.screen = Screen::Done {
+        board,
+        report,
+        tab: Tab::Report,
+    };
     app.scroll = ScrollState::top();
     app
 }
@@ -842,7 +849,7 @@ fn fail_shows_expected_read_and_reason() {
     let buffer = screen_buffer(&app, 80, 30);
     let lines = buffer_rows(&buffer);
     assert_fits(&lines, 80);
-    assert!(lines[0].ends_with("FAIL"), "{}", lines[0]);
+    assert!(lines[0].ends_with("FAIL   [Report]  Board"), "{}", lines[0]);
 
     test_row(
         &lines,
@@ -1077,7 +1084,7 @@ fn more_indicator_counts_hidden_lines() {
 
     let first = footer(&app);
     assert!(
-        first.starts_with(" ↑↓ scroll   enter back to boards   q quit "),
+        first.starts_with(" tab board   ↑↓ scroll   enter back to boards   q quit "),
         "{first}"
     );
     assert!(first.ends_with(&format!(" ↓ {hidden} more")), "{first}");
@@ -1099,7 +1106,10 @@ fn more_indicator_counts_hidden_lines() {
 
     // Everything fits: no indicator and no scroll hint.
     let tall = done_app(esp32_report(), 80, 40);
-    assert_eq!(view(&tall, 40).0, " enter back to boards   q quit");
+    assert_eq!(
+        view(&tall, 40).0,
+        " tab board   enter back to boards   q quit"
+    );
 }
 
 #[test]
@@ -1112,7 +1122,7 @@ fn summary_and_footer_stay_visible_when_scrolled() {
             lines[0].starts_with(" ESP32  ·  1c:c3:ab:d2:25:b4  ·  COM9 "),
             "{key:?}"
         );
-        assert!(lines[0].ends_with("PASS"), "{key:?}");
+        assert!(lines[0].ends_with("PASS   [Report]  Board"), "{key:?}");
         assert!(lines[1].starts_with(" ───"), "{key:?}");
         assert!(lines[11].starts_with(" ───"), "{key:?}");
         assert_eq!(
@@ -1122,7 +1132,7 @@ fn summary_and_footer_stay_visible_when_scrolled() {
         assert_eq!(lines[13], " ✓ board back to its app", "{key:?}");
         assert!(lines[14].starts_with(" ───"), "{key:?}");
         assert!(
-            lines[15].starts_with(" ↑↓ scroll   enter back to boards"),
+            lines[15].starts_with(" tab board   ↑↓ scroll   enter back to boards"),
             "{key:?}"
         );
         assert_fits(&lines, 80);
@@ -1150,4 +1160,494 @@ fn summary_and_footer_stay_visible_when_scrolled() {
         format!("✕ board not back to its app — {reason}")
     );
     assert!(lines[start + 2].starts_with(" ───"));
+}
+
+// ---- Board panel (#23) ----
+
+const S3_MAC: &str = "10:51:db:84:14:0c";
+
+fn ch9102(name: &str) -> PortDesc {
+    usb(name, 0x1A86, 0x55D4, "5B53026573")
+}
+
+/// `board` run by the real runner, every session answered by `probe` (a fixture, maybe with a
+/// fact changed or failing); the OS list always shows the board's ports.
+fn run_fixture(board: &Board, probe: &FakeProbe) -> Report {
+    let time = TestTime::default();
+    let ports: Vec<PortDesc> = board.ports().cloned().collect();
+    let mut enumerate = move || ports.clone();
+    runner::run_board(
+        &mut |_: &PortDesc| -> Box<dyn Probe> { Box::new(probe.clone()) },
+        board,
+        &time,
+        &time,
+        &mut enumerate,
+        &mut |_| {},
+    )
+}
+
+fn fixture(target: &str) -> FakeProbe {
+    FakeProbe::from_fixture(target).unwrap()
+}
+
+/// The S3 of the bench through its CH343 (the native port is not wired on the capture).
+fn s3_board() -> Board {
+    Board::new(mac(S3_MAC), Some(chip("esp32s3")), vec![ch343("COM12")]).unwrap()
+}
+
+/// The ESP32 DevKit V1 of the bench through its CH9102.
+fn esp32_board() -> Board {
+    Board::new(mac(ESP32_MAC), Some(chip("esp32")), vec![ch9102("COM9")]).unwrap()
+}
+
+/// An app on the Board tab of `board`'s result, on a `width` × `height` terminal.
+fn board_app(board: Board, report: Report, width: u16, height: u16) -> App {
+    let mut app = App::new();
+    app.resize(width, height);
+    app.screen = Screen::Done {
+        board,
+        report,
+        tab: Tab::Board,
+    };
+    app
+}
+
+/// The body rows of a board panel, from `  Chip` to the last port, as drawn.
+fn panel(lines: &[String]) -> Vec<&str> {
+    let start = lines
+        .iter()
+        .position(|line| line == "  Chip")
+        .unwrap_or_else(|| panic!("no Board panel:\n{}", lines.join("\n")));
+    let end = lines
+        .iter()
+        .rposition(|line| line.starts_with("    ├─") || line.starts_with("    └─"))
+        .unwrap_or_else(|| panic!("no ports:\n{}", lines.join("\n")));
+    lines[start..=end].iter().map(String::as_str).collect()
+}
+
+#[test]
+fn board_panel_merges_table_and_read_values() {
+    // S3: datasheet rows (CPU, clock, radios, USB) next to what was read through the CH343.
+    let board = s3_board();
+    let report = run_fixture(&board, &fixture("esp32s3"));
+    let app = board_app(board, report, 80, 30);
+    let buffer = screen_buffer(&app, 80, 30);
+    let lines = buffer_rows(&buffer);
+    assert_fits(&lines, 80);
+    assert_eq!(
+        lines[0],
+        " ESP32-S3  ·  10:51:db:84:14:0c  ·  COM12                PASS   Report  [Board]"
+    );
+    assert_eq!(
+        panel(&lines),
+        [
+            "  Chip",
+            "    Family           ESP32-S3 · package 0                                  read",
+            "    Revision         v0.2                                                  read",
+            "    CPU              Xtensa LX7 × 2 · ULP-RISC-V + ULP-FSM            datasheet",
+            "    Max clock        240 MHz                                          datasheet",
+            "    Crystal          40 MHz                                                read",
+            "  Memory",
+            "    Flash            16 MB external · JEDEC 0x684018                       read",
+            "    PSRAM            8 MB in package (AP_3v3)                              read",
+            "  Radios",
+            "    Wireless         Wi-Fi 4 (2.4 GHz) · BLE                          datasheet",
+            "  USB",
+            "    USB-Serial/JTAG  yes · not connected on this board                datasheet",
+            "    USB OTG          yes                                              datasheet",
+            "  Identity",
+            "    MAC              10:51:db:84:14:0c                             read (eFuse)",
+            "    ROM id           security info chip id 9                               read",
+            "  Ports",
+            "    └─ COM12  CH343            bridge   primary",
+        ]
+    );
+    // Labels, separators and sources gray; values in the default colour.
+    let row = lines
+        .iter()
+        .position(|line| line.starts_with("    Flash"))
+        .unwrap();
+    assert_eq!(fg_at(&buffer, row, "Flash"), Color::DarkGray);
+    assert_eq!(fg_at(&buffer, row, "16 MB"), Color::Reset);
+    assert_eq!(fg_at(&buffer, row, "·"), Color::DarkGray);
+    assert_eq!(fg_at(&buffer, row, "0x684018"), Color::Reset);
+    assert_eq!(fg_at(&buffer, row, "read"), Color::DarkGray);
+    let row = lines
+        .iter()
+        .position(|line| line.starts_with("    USB-Serial"))
+        .unwrap();
+    assert_eq!(fg_at(&buffer, row, "not connected"), Color::DarkGray);
+    // The summary stays under the panel, the footer names the other tab.
+    assert_eq!(
+        line_starting(&lines, " Tests:"),
+        " Tests: 10 passed, 1 skipped, 11 total"
+    );
+    assert_eq!(lines[29], " tab report   enter back to boards   q quit");
+
+    // C6: both ports tested; the native one confirms the table's USB-Serial/JTAG.
+    let report = c6_report();
+    let app = board_app(crate::runner::worker::testing::c6_board(), report, 80, 30);
+    let buffer = screen_buffer(&app, 80, 30);
+    let lines = buffer_rows(&buffer);
+    assert_fits(&lines, 80);
+    assert_eq!(
+        panel(&lines),
+        [
+            "  Chip",
+            "    Family           ESP32-C6 · package 0                                  read",
+            "    Revision         v0.2                                                  read",
+            "    CPU              RISC-V × 1 · LP RISC-V                           datasheet",
+            "    Max clock        160 MHz                                          datasheet",
+            "    Crystal          40 MHz                                                read",
+            "  Memory",
+            "    Flash            16 MB external · JEDEC 0x684018                       read",
+            "    PSRAM            none in package                                       read",
+            "  Radios",
+            "    Wireless         Wi-Fi 6 (2.4 GHz) · BLE · IEEE 802.15.4          datasheet",
+            "  USB",
+            "    USB-Serial/JTAG  yes · tested ✓                                        read",
+            "    USB OTG          no                                               datasheet",
+            "  Identity",
+            "    MAC              e8:f6:0a:f7:ff:d4                             read (eFuse)",
+            "    ROM id           security info chip id 13                              read",
+            "  Ports",
+            "    ├─ COM13  CH343            bridge   primary",
+            "    └─ COM11  USB-Serial/JTAG  native",
+        ]
+    );
+    let row = lines
+        .iter()
+        .position(|line| line.starts_with("    USB-Serial"))
+        .unwrap();
+    assert_eq!(fg_at(&buffer, row, "✓"), Color::Green);
+    // Port names are on screen only: the report itself has none.
+    assert!(
+        format!("{:?}", app_report(&app).board().ports)
+            .find("COM1")
+            .is_none()
+    );
+}
+
+/// The report shown by an app on the `Done` screen.
+fn app_report(app: &App) -> &Report {
+    match &app.screen {
+        Screen::Done { report, .. } => report,
+        _ => panic!("not on the Done screen"),
+    }
+}
+
+#[test]
+fn read_value_wins_and_divergence_is_marked() {
+    // Spec 8.4: a 26 MHz crystal is a `variable` finding: the read value, `!`, the table value.
+    let board = s3_board();
+    let report = run_fixture(&board, &fixture("esp32s3").with_crystal_mhz(26));
+    let app = board_app(board.clone(), report, 80, 30);
+    let buffer = screen_buffer(&app, 80, 30);
+    let lines = buffer_rows(&buffer);
+    assert_fits(&lines, 80);
+    assert_eq!(
+        block(
+            &lines,
+            "    Crystal          26 MHz !                                              read",
+            2
+        )[1],
+        "                     └ table 40 MHz (variable)"
+    );
+    let row = lines
+        .iter()
+        .position(|line| line.starts_with("    Crystal"))
+        .unwrap();
+    assert_eq!(fg_at(&buffer, row, "26 MHz"), Color::Reset);
+    assert_eq!(fg_at(&buffer, row, "!"), Color::Yellow);
+    assert_eq!(fg_at(&buffer, row + 1, "└ table"), Color::DarkGray);
+    assert_eq!(fg_at(&buffer, row + 1, "40 MHz"), Color::Reset);
+    assert_eq!(fg_at(&buffer, row + 1, "(variable)"), Color::DarkGray);
+
+    // An `invariant` finding (the ROM says another chip id) is shown the same way.
+    let identity = crate::chips::ChipIdentity::SecurityChipId(13);
+    let report = run_fixture(&board, &fixture("esp32s3").with_identity(identity));
+    let lines = screen_lines_sized(&board_app(board, report, 80, 30), 80, 30);
+    assert_eq!(
+        block(
+            &lines,
+            "    ROM id           security info chip id 13 !                            read",
+            2
+        )[1],
+        "                     └ table security info chip id 9 (invariant)"
+    );
+
+    // No finding, but the test expected another value: the eFuse MAC against the ROM's.
+    let report = report_of(
+        "esp32c3",
+        vec![(
+            MAC_EFUSE_REG,
+            Outcome::fail(
+                FAIL_MAC_EFUSE_MISMATCH,
+                17,
+                host("80:53:e0:0a:5d:ac"),
+                host("80:53:e0:0a:5d:ad"),
+            ),
+        )],
+        HardReset::done(),
+    );
+    let board = Board::new(mac(C3_MAC), Some(chip("esp32c3")), vec![c3_native()]).unwrap();
+    let lines = screen_lines_sized(&board_app(board, report, 80, 40), 80, 40);
+    assert_fits(&lines, 80);
+    assert_eq!(
+        block(
+            &lines,
+            "    MAC              80:53:e0:0a:5d:ad !                           read (eFuse)",
+            2
+        )[1],
+        "                     └ ROM 80:53:e0:0a:5d:ac"
+    );
+}
+
+#[test]
+fn missing_read_shows_dash_with_reason() {
+    let board = s3_board();
+    let protocol = || crate::probe::ProbeError::Protocol("bad reply".to_owned());
+    let probe = fixture("esp32s3")
+        .fail_at(Step::FlashId, protocol())
+        .fail_at(Step::Revision, protocol());
+    let report = run_fixture(&board, &probe);
+    let app = board_app(board.clone(), report, 80, 30);
+    let buffer = screen_buffer(&app, 80, 30);
+    let lines = buffer_rows(&buffer);
+    assert_fits(&lines, 80);
+    // No source: nothing was read, and the table is not used in its place.
+    assert_eq!(
+        line_starting(&lines, "    Flash"),
+        "    Flash            — not read (flash/jedec-id failed)"
+    );
+    assert_eq!(
+        line_starting(&lines, "    Revision"),
+        "    Revision         — not read (rom/revision failed)"
+    );
+    let row = lines
+        .iter()
+        .position(|line| line.starts_with("    Flash"))
+        .unwrap();
+    assert_eq!(fg_at(&buffer, row, "—"), Color::Reset);
+    assert_eq!(fg_at(&buffer, row, "not read"), Color::DarkGray);
+    // The rest of the panel is still there.
+    assert!(line_starting(&lines, "    PSRAM").contains("8 MB in package"));
+
+    // A blank bus answered RDID: the FAIL read `0xFFFFFF`, which is no flash at all.
+    let blank = crate::probe::FlashId {
+        manufacturer: 0xFF,
+        memory_type: 0xFF,
+        capacity: 0xFF,
+    };
+    let report = run_fixture(&board, &fixture("esp32s3").with_flash_id(blank));
+    let lines = screen_lines_sized(&board_app(board.clone(), report, 80, 30), 80, 30);
+    assert_eq!(
+        line_starting(&lines, "    Flash"),
+        "    Flash            — not read (flash/jedec-id failed)"
+    );
+
+    // The bridge never synced: every read row points at the port test; the MAC is the one the
+    // ROM gave when the bridge was identified.
+    let report = run_fixture(
+        &board,
+        &fixture("esp32s3").fail_at(Step::Connect, crate::probe::ProbeError::Timeout),
+    );
+    let lines = screen_lines_sized(&board_app(board, report, 80, 30), 80, 30);
+    assert_fits(&lines, 80);
+    for label in ["Revision", "Crystal", "Flash", "PSRAM", "ROM id"] {
+        let line = line_starting(&lines, &format!("    {label} "));
+        assert!(
+            line.ends_with("— not read (port/uart-bridge failed)"),
+            "{line}"
+        );
+    }
+    assert_eq!(
+        line_starting(&lines, "    Family"),
+        "    Family           ESP32-S3                                              read"
+    );
+    assert!(
+        line_starting(&lines, "    MAC").ends_with(&format!(
+            "{S3_MAC}                               read (ROM)"
+        )),
+        "{}",
+        line_starting(&lines, "    MAC")
+    );
+    assert!(
+        line_starting(&lines, "    USB-Serial/JTAG")
+            .starts_with("    USB-Serial/JTAG  yes · not connected on this board"),
+    );
+}
+
+#[test]
+fn esp32_shows_no_usb_serial_jtag() {
+    let board = esp32_board();
+    let report = run_fixture(&board, &fixture("esp32"));
+    let lines = screen_lines_sized(&board_app(board, report, 80, 30), 80, 30);
+    assert_fits(&lines, 80);
+    assert_eq!(
+        block(&lines, "  USB", 3),
+        [
+            "  USB",
+            "    USB-Serial/JTAG  no                                               datasheet",
+            "    USB OTG          no                                               datasheet",
+        ]
+    );
+    assert_eq!(
+        line_starting(&lines, "    CPU"),
+        "    CPU              Xtensa LX6 × 2 · ULP-FSM                         datasheet"
+    );
+    assert_eq!(
+        line_starting(&lines, "    Wireless"),
+        "    Wireless         Wi-Fi 4 (2.4 GHz) · BT Classic · BLE             datasheet"
+    );
+    assert_eq!(
+        line_starting(&lines, "    └─"),
+        "    └─ COM9   CH9102           bridge   primary"
+    );
+}
+
+#[test]
+fn tab_switches_report_and_board() {
+    let mut app = bench_app();
+    app.resize(80, 16);
+    start_run(&mut app);
+    // `tab` does nothing while the run is in flight.
+    let running = app.clone();
+    assert_eq!(app.on_key(press(KeyCode::Tab)), Action::None);
+    assert_eq!(app, running);
+
+    app.on_event(Event::RunFinished(c6_report()));
+    let lines = screen_lines_sized(&app, 80, 16);
+    assert!(lines[0].ends_with("PASS   [Report]  Board"), "{}", lines[0]);
+    assert_eq!(lines[2], "  port");
+    assert!(
+        lines[15].starts_with(" tab board   ↑↓ scroll   enter back to boards   q quit "),
+        "{}",
+        lines[15]
+    );
+    // The report scrolls; then to the Board tab, which starts at its own top.
+    app.on_key(press(KeyCode::Down));
+    app.on_key(press(KeyCode::Down));
+    let report_view_row = screen_lines_sized(&app, 80, 16)[2].clone();
+    assert_ne!(report_view_row, "  port");
+    // A release is not a press (Windows reports both).
+    app.on_key(release(KeyCode::Tab));
+    assert_eq!(screen_lines_sized(&app, 80, 16)[2], report_view_row);
+
+    assert_eq!(app.on_key(press(KeyCode::Tab)), Action::None);
+    let lines = screen_lines_sized(&app, 80, 16);
+    assert!(lines[0].ends_with("PASS   Report  [Board]"), "{}", lines[0]);
+    assert_eq!(lines[2], "  Chip");
+    assert!(
+        lines[15].starts_with(" tab report   ↑↓ scroll   enter back to boards   q quit "),
+        "{}",
+        lines[15]
+    );
+    // The header names the active tab in bold, the other in gray.
+    let buffer = screen_buffer(&app, 80, 16);
+    assert!(
+        buffer[(73, 0)].modifier.contains(Modifier::BOLD),
+        "{:?}",
+        buffer[(73, 0)]
+    );
+    assert_eq!(fg_at(&buffer, 0, "Report"), Color::DarkGray);
+    app.on_key(press(KeyCode::Down));
+    assert_eq!(screen_lines_sized(&app, 80, 16)[2], lines[3]);
+
+    // Back to Report: where it was left.
+    app.on_key(press(KeyCode::Tab));
+    assert_eq!(screen_lines_sized(&app, 80, 16)[2], report_view_row);
+    app.on_key(press(KeyCode::Tab));
+    assert_eq!(screen_lines_sized(&app, 80, 16)[2], lines[3]);
+
+    // Enter still goes back to the list; the next run opens on Report, at the top.
+    app.on_key(press(KeyCode::Enter));
+    assert_eq!(app.screen, Screen::List);
+    assert!(matches!(app.on_key(press(KeyCode::Enter)), Action::Run(_)));
+    app.on_event(Event::RunFinished(c6_report()));
+    let lines = screen_lines_sized(&app, 80, 16);
+    assert!(lines[0].ends_with("[Report]  Board"), "{}", lines[0]);
+    assert_eq!(lines[2], "  port");
+    assert_eq!(app.on_key(press(KeyCode::Char('q'))), Action::Quit);
+}
+
+#[test]
+fn board_panel_scrolls_and_wraps_at_60_columns() {
+    let board = s3_board();
+    let report = run_fixture(&board, &fixture("esp32s3"));
+    let lines = screen_lines_sized(&board_app(board.clone(), report.clone(), 60, 40), 60, 40);
+    assert_fits(&lines, 60);
+    // Too narrow for the port names in the header: they are in the panel.
+    assert_eq!(
+        lines[0],
+        " ESP32-S3  ·  10:51:db:84:14:0c      PASS   Report  [Board]"
+    );
+    // A long value wraps under itself; the source stays on its first row, flush right.
+    assert_eq!(
+        block(
+            &lines,
+            "    CPU              Xtensa LX7 × 2 · ULP-RISC-V  datasheet",
+            2
+        )[1],
+        "                     + ULP-FSM"
+    );
+    assert_eq!(
+        block(
+            &lines,
+            "    USB-Serial/JTAG  yes · not connected on this  datasheet",
+            2
+        )[1],
+        "                     board"
+    );
+    assert_eq!(
+        line_starting(&lines, "    Flash"),
+        "    Flash            16 MB external · JEDEC 0x684018   read"
+    );
+    // A divergence's detail wraps under `└` too.
+    let report26 = run_fixture(&board, &fixture("esp32s3").with_crystal_mhz(26));
+    let lines = screen_lines_sized(&board_app(board.clone(), report26, 60, 40), 60, 40);
+    assert_fits(&lines, 60);
+    assert_eq!(
+        block(
+            &lines,
+            "    Crystal          26 MHz !                          read",
+            2
+        )[1],
+        "                     └ table 40 MHz (variable)"
+    );
+
+    // 16 rows: header, rule, 9 body rows, rule, 2 summary rows, rule, footer.
+    let body: Vec<String> = board_view::board_lines(&report, &board, 60)
+        .iter()
+        .map(|line| line.to_string().trim_end().to_owned())
+        .collect();
+    let mut app = board_app(board, report, 60, 16);
+    let lines = screen_lines_sized(&app, 60, 16);
+    assert_fits(&lines, 60);
+    assert_eq!(lines[2], "  Chip");
+    // `enter back to boards` gives way so that the hints and the indicator fit.
+    let hidden = body.len() - 9;
+    assert!(
+        lines[15].starts_with(" tab report   ↑↓ scroll   enter back   q quit "),
+        "{}",
+        lines[15]
+    );
+    assert!(
+        lines[15].ends_with(&format!(" ↓ {hidden} more")),
+        "{}",
+        lines[15]
+    );
+    assert_eq!(lines[15].chars().count(), 59, "flush right: {}", lines[15]);
+    app.on_key(press(KeyCode::End));
+    let lines = screen_lines_sized(&app, 60, 16);
+    assert_fits(&lines, 60);
+    assert_eq!(lines[10], "    └─ COM12  CH343            bridge   primary");
+    assert!(
+        lines[15].ends_with(&format!(" ↑ {hidden} more")),
+        "{}",
+        lines[15]
+    );
+    assert_eq!(lines[12], " Tests: 10 passed, 1 skipped, 11 total");
+    app.on_key(press(KeyCode::PageUp));
+    assert_eq!(screen_lines_sized(&app, 60, 16)[2], body[hidden - 8]);
 }
