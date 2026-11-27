@@ -1,0 +1,99 @@
+{
+  "format_version": 1,
+  "captured": {
+    "date": "2026-11-27T23:06:03Z",
+    "host_version": "0.0.1",
+    "note": "C3 + C6 on the hub",
+    "port": null,
+    "run": false
+  },
+  "ports": [
+    {
+      "name": "COM5",
+      "usb": {
+        "vid": "1A86",
+        "pid": "7522",
+        "serial": "6",
+        "manufacturer": "wch.cn",
+        "product": "USB-SERIAL CH340K (COM5)",
+        "interface": null
+      }
+    },
+    {
+      "name": "COM13",
+      "usb": {
+        "vid": "1A86",
+        "pid": "55D3",
+        "serial": "5D16086713",
+        "manufacturer": "wch.cn",
+        "product": "USB-Enhanced-SERIAL CH343 (COM13)",
+        "interface": null
+      }
+    },
+    {
+      "name": "COM6",
+      "usb": {
+        "vid": "303A",
+        "pid": "1001",
+        "serial": "80:53:E0:0A:5D:AC",
+        "manufacturer": "Microsoft",
+        "product": "Dispositivo Serial USB (COM6)",
+        "interface": 0
+      }
+    },
+    {
+      "name": "COM11",
+      "usb": {
+        "vid": "303A",
+        "pid": "1001",
+        "serial": "E8:F6:0A:F7:FF:D4",
+        "manufacturer": "Microsoft",
+        "product": "Dispositivo Serial USB (COM11)",
+        "interface": 0
+      }
+    }
+  ],
+  "identified": [
+    {
+      "result": "found",
+      "port": {
+        "name": "COM5",
+        "usb": {
+          "vid": "1A86",
+          "pid": "7522",
+          "serial": "6",
+          "manufacturer": "wch.cn",
+          "product": "USB-SERIAL CH340K (COM5)",
+          "interface": null
+        }
+      },
+      "mac": "80:53:e0:0a:5d:ac",
+      "chip": "esp32c3",
+      "reset": {
+        "done": true,
+        "reason": null
+      }
+    },
+    {
+      "result": "found",
+      "port": {
+        "name": "COM13",
+        "usb": {
+          "vid": "1A86",
+          "pid": "55D3",
+          "serial": "5D16086713",
+          "manufacturer": "wch.cn",
+          "product": "USB-Enhanced-SERIAL CH343 (COM13)",
+          "interface": null
+        }
+      },
+      "mac": "e8:f6:0a:f7:ff:d4",
+      "chip": "esp32c6",
+      "reset": {
+        "done": true,
+        "reason": null
+      }
+    }
+  ],
+  "report": null
+}

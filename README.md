@@ -39,6 +39,14 @@ Tests: 4 passed, 1 skipped, 5 total
   CPU tests on the board itself and streams the results back.
 - **Non-destructive by default:** v0.1 only reads. Writing the test firmware always asks first.
 
+## Usage
+
+The **user manual** walks through every screen with real bench screenshots, the `--no-tui` /
+`--json` modes for scripts and CI, and what each result means:
+[English](docs/project/MANUAL.en.md) · [Português](docs/project/MANUAL.md).
+
+![devkit-tester report](docs/project/manual/img/c6_both_report.svg)
+
 ## Building from source
 
 Windows + PowerShell (the reference platform). Full setup, including ESP-IDF v5.5.2 and known
