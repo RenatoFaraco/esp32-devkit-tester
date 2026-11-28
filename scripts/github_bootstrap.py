@@ -700,6 +700,27 @@ ISSUES = [
     ),
     (
         M1,
+        ["host"],
+        "host: run the suites through the next port that synced when the primary fails",
+        body(
+            "Bench (2026-11-28): C3 with both cables, esp32-logcat holding the bridge (COM5). The bridge FAILed busy, the native port synced in 383 ms, yet all nine rom/efuse/flash tests were `not run: port/uart-bridge failed` (1 passed, 1 failed, 9 skipped). The board was fully reachable.",
+            [
+                "When the primary port fails to sync, run the suites on the next port of the board that syncs (ADR-008 §5 primary order stays: bridge first); report which port the suites ran through (`primary` in the report/JSON moves to that port, or a new field if the spec needs it — architect decides)",
+                "Only when no port syncs do the suites become `not run`",
+                "Same rule for TUI, --no-tui and --json; test with FakeProbe (bridge Busy + native ok → 10 passed, 1 failed)",
+                "Readability: a SKIP shows its reason inline in the empty value column when it fits, and only wraps below when it does not (today every SKIP takes two lines; nine `not run` lines double the report)",
+                "Manual: note that testing through a port resets the board, so a monitor on the other port sees a restart",
+            ],
+            [
+                "C3 with the bridge busy reports 10 passed, 1 failed on the bench",
+                "A report with many SKIPs is one line per test when reasons fit",
+            ],
+            "PRD v0.1 H3, §7 criterion 2 · ADR-008 §5 · report-json.md §3.2 (primary)",
+            depends="grouping (#18), report view (#22)",
+        ),
+    ),
+    (
+        M1,
         ["board", "test"],
         "test: verify no byte is written to flash",
         body(
