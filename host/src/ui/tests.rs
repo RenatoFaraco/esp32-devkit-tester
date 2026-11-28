@@ -1888,3 +1888,33 @@ fn unplug_mid_run_gives_fail_then_not_run() {
     assert_eq!(app.on_key(press(KeyCode::Char('q'))), Action::Quit);
     assert!(worker.shutdown(Duration::from_secs(5)));
 }
+
+/// Bench, 2026-11-28: esp32-logcat held the C3 bridge, so its identification failed, and at
+/// 80 columns the list cut the reason ("…port busy: anoth"). It must wrap, never be cut.
+#[test]
+fn long_identification_failure_wraps_in_the_list() {
+    let mut app = App::new();
+    app.on_event(boards_event(&[ch340k("COM5"), c3_native()]));
+    app.on_event(Event::Identified(Identified::Failed {
+        port: ch340k("COM5"),
+        reason: "identification failed: port busy: another program (e.g. a serial monitor) \
+                 has it open"
+            .to_owned(),
+    }));
+    for width in [80u16, 60] {
+        let lines = screen_lines_sized(&app, width, 24);
+        assert_fits(&lines, usize::from(width));
+        let text = lines.join(" ");
+        let squashed: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            squashed.contains("has it open"),
+            "{width}:\n{}",
+            lines.join("\n")
+        );
+        assert!(
+            lines.iter().any(|line| line.contains("✕ COM5")),
+            "{}",
+            lines.join("\n")
+        );
+    }
+}
