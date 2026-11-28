@@ -92,7 +92,8 @@ board, without opening any port.
 - Under it, the tree of the board's ports:
   - **`bridge`** is the USB-serial bridge;
   - **`native`** is the chip's own USB;
-  - **`primary`** is the port the suites run through (the bridge, when there is one).
+  - **`primary`** is the port the suites run through: the bridge, when there is one and it
+    answers; otherwise the next port that answers.
 - `↑↓` picks the board and `enter` tests it.
 
 With two boards plugged in, both show up and you pick which one to test:
@@ -211,6 +212,11 @@ because the tester never touched it through that port:
 ```
 
 Close the other program and test again.
+
+If only **one** of the ports is busy (esp32-logcat on the bridge, for instance), the tester uses
+the other: the suites run through the port that synced, and only the busy port's test fails.
+Keep in mind that **testing resets the board**: the final reset goes back to the firmware, and a
+monitor open on the other port sees a restart.
 
 ### 3.4 Board unplugged mid-run
 

@@ -777,7 +777,7 @@ fn assert_fits(lines: &[String], width: usize) {
 }
 
 #[test]
-fn long_skip_reason_wraps_instead_of_being_cut() {
+fn long_skip_reason_still_wraps() {
     let lines = screen_lines_sized(&done_app(esp32_report(), 80, 40), 80, 40);
     assert_fits(&lines, 80);
     assert_eq!(
@@ -815,6 +815,168 @@ fn long_skip_reason_wraps_instead_of_being_cut() {
     assert_eq!(
         test_row(&lines, "    ✓ chip-identity ", "11 ms", 60),
         "    ✓ chip-identity        magic register 0x4000100…  11 ms"
+    );
+}
+
+/// `board` run by the real runner, the session on each port answered by the probe of the same
+/// name; the OS list always shows the board's ports (nothing re-enumerates in these cases).
+fn run_ports(board: &Board, probes: Vec<(&str, FakeProbe)>) -> Report {
+    let time = TestTime::default();
+    let ports: Vec<PortDesc> = board.ports().cloned().collect();
+    let mut enumerate = move || ports.clone();
+    runner::run_board(
+        &mut |port: &PortDesc| -> Box<dyn Probe> {
+            let probe = probes
+                .iter()
+                .find(|(name, _)| *name == port.name)
+                .map(|(_, probe)| probe.clone())
+                .unwrap_or_else(|| panic!("no probe for {}", port.name));
+            Box::new(probe)
+        },
+        board,
+        &time,
+        &time,
+        &mut enumerate,
+        &mut |_| {},
+    )
+}
+
+/// The Done screen of `board`'s `report`, its durations masked (`# ms`, same width): the syncs
+/// are timed by the real clock.
+fn done_screen(board: Board, report: Report, width: u16, height: u16) -> Vec<String> {
+    let mut app = App::new();
+    app.resize(width, height);
+    app.screen = Screen::Done {
+        board,
+        report,
+        tab: Tab::Report,
+    };
+    app.scroll = ScrollState::top();
+    screen_lines_sized(&app, width, height)
+        .into_iter()
+        .map(|line| match line.strip_suffix(" ms") {
+            Some(head) => {
+                let digits = head.len() - head.trim_end_matches(|c: char| c.is_ascii_digit()).len();
+                format!("{}{} ms", &head[..head.len() - digits], "#".repeat(digits))
+            }
+            None => line,
+        })
+        .collect()
+}
+
+/// #67: a SKIP's reason that fits in the value column stays on the test line, in gray; one that
+/// does not fit still goes under it (see `long_skip_reason_still_wraps`).
+#[test]
+fn skip_reason_is_inline_when_it_fits() {
+    // Bench, 2026-11-28: esp32-logcat holds the C3's bridge; the native port runs the suites.
+    // (The fixture's C3 is the one whose MAC ends in 5d:70.)
+    let c3_mac = "80:53:e0:0a:5d:70";
+    let c3 = || {
+        Board::new(
+            mac(c3_mac),
+            Some(chip("esp32c3")),
+            vec![ch340k("COM5"), native("COM6", "80:53:E0:0A:5D:70")],
+        )
+        .unwrap()
+    };
+    let report = run_ports(
+        &c3(),
+        vec![
+            (
+                "COM5",
+                fixture("esp32c3").fail_at(Step::Connect, crate::probe::ProbeError::Busy),
+            ),
+            ("COM6", fixture("esp32c3")),
+        ],
+    );
+    let lines = done_screen(c3(), report, 80, 30);
+    assert_fits(&lines, 80);
+    assert_eq!(
+        block(&lines, "  port", 20),
+        [
+            "  port",
+            "    ✕ uart-bridge          80:53:e0:0a:5d:70                               # ms",
+            "                           └ sync failed: port busy: another program (e.g. a",
+            "                             serial monitor) has it open",
+            "    ✓ usb-serial-jtag      80:53:e0:0a:5d:70                               # ms",
+            "  rom",
+            "    ✓ chip-identity        security info chip id 5                         # ms",
+            "    ✓ revision             v0.4                                            # ms",
+            "    ✓ crystal              40 MHz                                          # ms",
+            "    ✓ mac-efuse-reg        80:53:e0:0a:5d:70                               # ms",
+            "  efuse",
+            "    ✓ package              package 0                                       # ms",
+            "    ✓ psram                none in package                                 # ms",
+            "    ✓ embedded-flash       4 MB (XMC)                                      # ms",
+            "  flash",
+            "    ✓ jedec-id             0x464016                                        # ms",
+            "    ✓ size                 4 MB                                            # ms",
+            "",
+            "",
+            "",
+        ]
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line == " Tests: 1 failed, 10 passed, 11 total"),
+        "{}",
+        lines.join(
+            "
+"
+        )
+    );
+
+    // The C6 through its native port alone, held by a serial monitor: nothing synced, each
+    // `not run` takes one line.
+    let c6 = || Board::new(mac(C6_MAC), Some(chip("esp32c6")), vec![c6_native()]).unwrap();
+    let busy = fixture("esp32c6").fail_at(Step::Connect, crate::probe::ProbeError::Busy);
+    let report = run_ports(&c6(), vec![("COM11", busy.clone())]);
+    let buffer = {
+        let mut app = App::new();
+        app.resize(80, 30);
+        app.screen = Screen::Done {
+            board: c6(),
+            report: report.clone(),
+            tab: Tab::Report,
+        };
+        app.scroll = ScrollState::top();
+        screen_buffer(&app, 80, 30)
+    };
+    let lines = done_screen(c6(), report, 80, 30);
+    assert_fits(&lines, 80);
+    let not_run = "not run: port/usb-serial-jtag failed";
+    assert_eq!(
+        block(&lines, "  rom", 3),
+        [
+            "  rom",
+            &format!("    ○ chip-identity        {not_run}"),
+            &format!("    ○ revision             {not_run}"),
+        ]
+    );
+    for id in BOARD_TESTS {
+        let row = format!("    ○ {:<20} {not_run}", id.name);
+        let at = lines
+            .iter()
+            .position(|line| *line == row)
+            .unwrap_or_else(|| panic!("{row}\n{}", lines.join("\n")));
+        // No detail line under it.
+        assert!(!lines[at + 1].contains('└'), "{}", lines[at + 1]);
+        assert_eq!(fg_at(&buffer, at, not_run), Color::DarkGray);
+        assert_eq!(fg_at(&buffer, at, "○"), Color::Yellow);
+    }
+
+    // At 60 columns the same reason no longer fits after the name: it goes under, as before.
+    let report = run_ports(&c6(), vec![("COM11", busy)]);
+    let lines = done_screen(c6(), report, 60, 40);
+    assert_fits(&lines, 60);
+    assert_eq!(
+        block(&lines, "    ○ chip-identity", 3),
+        [
+            "    ○ chip-identity",
+            "                           └ not run: port/usb-serial-jtag",
+            "                             failed",
+        ]
     );
 }
 
@@ -1725,4 +1887,34 @@ fn unplug_mid_run_gives_fail_then_not_run() {
     // Still responsive on Done: q quits.
     assert_eq!(app.on_key(press(KeyCode::Char('q'))), Action::Quit);
     assert!(worker.shutdown(Duration::from_secs(5)));
+}
+
+/// Bench, 2026-11-28: esp32-logcat held the C3 bridge, so its identification failed, and at
+/// 80 columns the list cut the reason ("…port busy: anoth"). It must wrap, never be cut.
+#[test]
+fn long_identification_failure_wraps_in_the_list() {
+    let mut app = App::new();
+    app.on_event(boards_event(&[ch340k("COM5"), c3_native()]));
+    app.on_event(Event::Identified(Identified::Failed {
+        port: ch340k("COM5"),
+        reason: "identification failed: port busy: another program (e.g. a serial monitor) \
+                 has it open"
+            .to_owned(),
+    }));
+    for width in [80u16, 60] {
+        let lines = screen_lines_sized(&app, width, 24);
+        assert_fits(&lines, usize::from(width));
+        let text = lines.join(" ");
+        let squashed: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            squashed.contains("has it open"),
+            "{width}:\n{}",
+            lines.join("\n")
+        );
+        assert!(
+            lines.iter().any(|line| line.contains("✕ COM5")),
+            "{}",
+            lines.join("\n")
+        );
+    }
 }

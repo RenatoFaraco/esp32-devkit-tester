@@ -16,6 +16,9 @@
 //! - Detail lines start with `└` under the value column, continue two cells further in, and
 //!   break between words (a word longer than the room, such as a hash, is cut hard). No line is
 //!   wider than the width it was laid out for, keeping one cell of margin on the right.
+//! - A SKIP has no value: its reason takes the value column, in gray, when it fits there whole
+//!   (`○ revision             not run: port/usb-serial-jtag failed`); a longer one goes under
+//!   the line as a detail, like any other reason.
 //!
 //! Every text shown here is a [`SafeText`] from the model or a host literal: nothing coming
 //! from the board reaches the terminal unsanitized.
@@ -138,12 +141,37 @@ fn test_prefix(glyph: Span<'static>, id: TestId) -> Vec<Span<'static>> {
     ]
 }
 
+/// The reason of a SKIP without a value or a finding, as one line, when it fits whole in the
+/// value column (up to the right margin): it is then shown on the test line, not under it.
+fn inline_reason(test: &TestResult, width: u16) -> Option<String> {
+    let outcome = &test.outcome;
+    let bare = outcome.state() == State::Skip
+        && outcome.finding().is_none()
+        && outcome.read().or(outcome.expected()).is_none();
+    if !bare {
+        return None;
+    }
+    let reason = outcome
+        .reason()?
+        .as_str()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let room = usize::from(width).saturating_sub(VALUE_COLUMN + MARGIN);
+    (!reason.is_empty() && reason.chars().count() <= room).then_some(reason)
+}
+
 /// One finished test: glyph, name, value (with a yellow `!` when the outcome carries a finding)
 /// and the duration flush right (none on a SKIP). The value is what was read or, failing that,
-/// what was expected, shortened with `…` only when the line is too narrow for it.
+/// what was expected, shortened with `…` only when the line is too narrow for it. A SKIP shows
+/// its reason there instead, in gray, when it fits ([`inline_reason`]).
 fn test_line(test: &TestResult, width: u16) -> Line<'static> {
     let outcome = &test.outcome;
     let mut left = test_prefix(glyph(outcome.state()), test.id);
+    if let Some(reason) = inline_reason(test, width) {
+        left.push(Span::styled(reason, gray()));
+        return Line::from(left);
+    }
     let duration = match outcome.state() {
         State::Skip => None,
         State::Pass | State::Fail => Some(format!("{} ms", outcome.duration_ms())),
@@ -246,11 +274,14 @@ fn finding_rows(finding: &Finding, state: State, width: u16) -> Vec<Vec<Span<'st
 /// - a finding: its table/read row and its kind/source row (on a FAIL the finding already says
 ///   why, so the reason, `<field> differs from the capability table`, is not repeated);
 /// - a FAIL that compared two values: `expected` and `read` on their own rows, then the reason;
-/// - any other FAIL, and every SKIP: the reason.
+/// - any other FAIL, and every SKIP whose reason is not already on the test line: the reason.
 ///
 /// `(ROM)`/`(eFuse)` name where each side came from, only in `rom/mac-efuse-reg`.
 fn detail_rows(test: &TestResult, width: u16) -> Vec<Vec<Span<'static>>> {
     let outcome = &test.outcome;
+    if inline_reason(test, width).is_some() {
+        return Vec::new();
+    }
     let room = usize::from(width).saturating_sub(DETAIL_COLUMN + MARGIN);
     if let Some(finding) = outcome.finding() {
         return finding_rows(finding, outcome.state(), width);

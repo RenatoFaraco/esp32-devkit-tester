@@ -987,10 +987,33 @@ fn draw_list(frame: &mut Frame, app: &App, area: Rect) {
                     safe(&port.name).as_str()
                 )),
             ];
-            if let Some(reason) = failed {
-                spans.push(Span::styled(format!("  {}", safe(reason)), gray()));
+            let used: usize = spans.iter().map(|span| span.content.chars().count()).sum();
+            let room = usize::from(area.width).saturating_sub(1);
+            let reason = failed.map(|reason| safe(reason).as_str().to_owned());
+            match reason {
+                // Fits on the row: keep it there, as before.
+                Some(reason) if used + 2 + reason.chars().count() <= room => {
+                    spans.push(Span::styled(format!("  {reason}"), gray()));
+                    lines.push(Line::from(spans));
+                }
+                // Too long: wrap it under the model column instead of cutting it (bench,
+                // 2026-11-28: "identification failed: port busy: anoth" at 80 columns).
+                Some(reason) => {
+                    lines.push(Line::from(spans));
+                    let indent = 3 + 1 + 1 + name_width + 1;
+                    let words = reason.split_whitespace().map(|word| (word, gray()));
+                    let rows =
+                        report_view::wrap_words(words, room.saturating_sub(indent + 2).max(10));
+                    for (index, row) in rows.into_iter().enumerate() {
+                        let lead = if index == 0 { "└ " } else { "  " };
+                        let mut line =
+                            vec![Span::raw(" ".repeat(indent)), Span::styled(lead, gray())];
+                        line.extend(row);
+                        lines.push(Line::from(line));
+                    }
+                }
+                None => lines.push(Line::from(spans)),
             }
-            lines.push(Line::from(spans));
         }
     }
 
