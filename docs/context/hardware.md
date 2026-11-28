@@ -39,6 +39,26 @@ preencher a linha (citar a fonte na issue de bring-up).
 
 Conferir cada linha com o Gerenciador de Dispositivos ao fazer o bring-up.
 
+## Prova: o testador não grava na flash (critério 4, issue #32)
+
+Feita em 2026-11-28, Windows 11, `esptool.py v4.12.dev1` (ESP-IDF v5.5.2), host na `main` depois
+do PR #69. Placa: a ESP32-C3 do bring-up (`80:53:e0:0a:5d:70`, flash embutida de 4 MB XMC), **só
+pela ponte CH340K (COM10)**: a USB nativa dessa placa tem mau contato e ficou desligada. A flash
+estava praticamente vazia (24 bytes diferentes de `0xFF` em `0x50000`), então nenhum firmware podia
+gravar nela por conta própria.
+
+| Passo | Comando (PowerShell, IDF ativo) | SHA-256 da flash inteira (4 MB) |
+|---|---|---|
+| Controle 1 | `python -m esptool --port COM10 --baud 921600 read_flash 0 ALL before1.bin` | `3501df7e63899c8862f3767b654d68ca4bcbce86f2fa6a3e71c38f3dcf544543` |
+| Controle 2 (após o hard reset do esptool) | idem → `before2.bin` | idêntico |
+| Teste | `host	arget\debug\devkit-tester.exe --no-tui --port COM10` → 10 passed, 1 skipped (`usb-serial-jtag`: nativa desligada), código 0, `board back to its app` | — |
+| Depois | idem → `after.bin` | **idêntico** |
+
+Os dois controles iguais mostram que só ligar e resetar a placa não muda a flash; o terceiro, igual
+aos dois, mostra que o testador também não muda. Hash com `Get-FileHash -Algorithm SHA256`. Para
+repetir em outra placa, escolha uma cujo firmware **não grave na flash** ao bootar (o do
+esp32-logcat grava o log na flash e não serve) e faça sempre os dois controles antes.
+
 ## Armadilhas conhecidas (herdadas do esp32-logcat)
 - **USB nativa da C6 travada (2026-11-27, Windows, atrás de hub):** depois de desplugar outra placa
   do mesmo hub, a `303A:1001` da C6 respondeu `ERROR_GEN_FAILURE` ("dispositivo não está
