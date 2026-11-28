@@ -51,7 +51,7 @@ gravar nela por conta própria.
 |---|---|---|
 | Controle 1 | `python -m esptool --port COM10 --baud 921600 read_flash 0 ALL before1.bin` | `3501df7e63899c8862f3767b654d68ca4bcbce86f2fa6a3e71c38f3dcf544543` |
 | Controle 2 (após o hard reset do esptool) | idem → `before2.bin` | idêntico |
-| Teste | `host	arget\debug\devkit-tester.exe --no-tui --port COM10` → 10 passed, 1 skipped (`usb-serial-jtag`: nativa desligada), código 0, `board back to its app` | — |
+| Teste | `host\target\debug\devkit-tester.exe --no-tui --port COM10` → 10 passed, 1 skipped (`usb-serial-jtag`: nativa desligada), código 0, `board back to its app` | — |
 | Depois | idem → `after.bin` | **idêntico** |
 
 Os dois controles iguais mostram que só ligar e resetar a placa não muda a flash; o terceiro, igual
