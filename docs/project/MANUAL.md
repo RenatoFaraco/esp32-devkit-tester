@@ -94,7 +94,8 @@ uma placa, sem abrir nenhuma porta.
 - Embaixo, a árvore com as portas da placa:
   - **`bridge`** é a ponte USB-serial;
   - **`native`** é a USB do próprio chip;
-  - **`primary`** é a porta pela qual as suítes rodam (a ponte, quando existe).
+  - **`primary`** é a porta pela qual as suítes rodam: a ponte, quando existe e responde; senão,
+    a próxima porta que responder.
 - `↑↓` escolhe a placa e `enter` testa.
 
 Com duas placas ligadas, as duas aparecem e você escolhe qual testar:
@@ -211,6 +212,11 @@ o testador nem chegou a tocá-la por ali:
 ```
 
 Feche o outro programa e teste de novo.
+
+Se só **uma** das portas estiver ocupada (o logcat na ponte, por exemplo), o testador usa a
+outra: as suítes rodam pela porta que sincronizou, e só o teste da porta ocupada falha. Lembre que
+**testar reinicia a placa**: o reset final volta para o firmware, e um monitor aberto na outra
+porta vê um restart.
 
 ### 3.4 Placa desplugada no meio do teste
 

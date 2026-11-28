@@ -57,6 +57,12 @@ Do lado do hardware:
    pela porta primária. Motivo da ponte primeiro: o reset por EN não derruba o dispositivo USB
    da porta em uso; resetar pela nativa faz a própria porta sumir e voltar, o caminho frágil
    no Windows. Placa sem ponte usa a nativa como primária.
+   **Fallback (2026-11-28, #67):** essa é a ordem de preferência. Se a porta preferida não
+   sincronizar (ocupada por um monitor serial, por exemplo), as suítes rodam pela próxima porta
+   da placa que sincronizar, e é essa que sai como `primary` no relatório (spec `report-json.md`
+   §3.2: a porta pela qual rodaram as suítes). Sem nenhuma porta sincronizada, as suítes ficam
+   `not run`. Esperar a porta nativa re-enumerar só faz sentido depois de uma sessão aberta e
+   resetada nesta execução.
 6. Porta nativa cujo número de série não for legível pela enumeração → tratada como ponte
    (identificada no passo 4). Divergência entre número de série e MAC lido pelo ROM → FAIL no
    teste `port` dessa porta.

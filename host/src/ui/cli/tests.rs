@@ -463,8 +463,16 @@ fn unplug_mid_run_gives_fail_then_not_run() {
         lines[at + 1].trim(),
         "\\ port disconnected during the flash ID read"
     );
-    assert!(lines[at + 2].starts_with("    - size"), "{}", lines[at + 2]);
-    assert_eq!(lines[at + 3].trim(), "\\ not run: flash/jedec-id failed");
+    // The SKIP's reason fits in the value column: it stays on the test line (#67).
+    assert_eq!(
+        lines[at + 2].trim_end(),
+        "    - size                 not run: flash/jedec-id failed"
+    );
+    assert!(
+        lines[at + 3].trim_start().starts_with("----"),
+        "{}",
+        lines[at + 3]
+    );
     assert!(
         ran.stdout
             .contains(" Tests: 1 failed, 9 passed, 1 skipped, 11 total"),
